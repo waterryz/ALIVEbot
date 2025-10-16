@@ -30,13 +30,9 @@ async def fetch_subject_grades(subj_id: str, cookie: str):
     def fmt(arr): return ", ".join(arr) if arr else "—"
 
     return (
-        f"📘 *Оценки за семестр*
-"
-        f"━━━━━━━━━━━━━━━━━━━
-"
-        f"Оценки: {fmt(points)}
-"
-        f"РО1: {fmt(ro1)}
-"
+        f"📘 *Оценки за семестр*"
+        f"━━━━━━━━━━━━━━━━━━━"
+        f"Оценки: {fmt(points)}"
+        f"РО1: {fmt(ro1)}"
         f"РО2: {fmt(ro2)}"
     )
