@@ -1,29 +1,58 @@
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
-def login_and_get_grades(iin, password):
-    session = requests.Session()
-    login_url = "https://college.snation.kz/kz/tko/login"
-    response = session.get(login_url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    token = soup.find("meta", {"name": "csrf-token"})["content"]
-    payload = {"_token": token, "login": iin, "password": password}
-    login_response = session.post(login_url, data=payload)
-    if "Журнал" not in login_response.text:
-        return None
-    journal_url = "https://college.snation.kz/ru/tko/control/journals/873776"
-    journal_response = session.get(journal_url)
-    return journal_response.text
+# URL для входа и журнала
+LOGIN_URL = "https://college.snation.kz/kz/tko/login"
+JOURNAL_URL = "https://college.snation.kz/ru/tko/control/journals"
 
-def extract_grades_from_html(html):
+
+async def get_cookie(iin: str, password: str) -> dict | None:
+    """
+    Авторизация и получение cookie (без хранения пароля)
+    """
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        data = {"iin": iin, "password": password}
+
+        resp = await client.post(LOGIN_URL, data=data, headers=headers)
+        # Проверяем успешный вход
+        if "Құпия сөз" in resp.text or "Жүйеге кіру" in resp.text or resp.status_code != 200:
+            return None
+
+        # Возвращаем словарь cookie
+        return {c.name: c.value for c in client.cookies.jar}
+
+
+async def get_journal_with_cookie(cookies: dict) -> str | None:
+    """
+    Получение HTML журнала, используя cookie сессии
+    """
+    async with httpx.AsyncClient(follow_redirects=True, cookies=cookies) as client:
+        resp = await client.get(JOURNAL_URL)
+        if resp.status_code != 200 or "Журнал" not in resp.text:
+            return None
+        return resp.text
+
+
+def extract_grades_from_html(html: str) -> str:
+    """
+    Парсинг HTML журнала и извлечение оценок
+    """
     soup = BeautifulSoup(html, "html.parser")
-    table = soup.find("table", class_="sc-journal__table--scroll-part")
-    if not table:
-        return "⚠️ Не удалось найти таблицу с оценками."
-    headers = [th.text.strip() for th in table.find_all("th")]
-    rows = table.find_all("tr")[1:]
-    grades = []
-    for td, date in zip(rows[0].find_all("td"), headers):
-        grade = td.text.strip()
-        grades.append(f"📅 {date}: {grade or '—'}")
-    return "\n".join(grades)
+
+    header_cells = soup.select(".sc-journal__table--scroll-part th.sc-journal__table--cell-value")
+    grade_cells = soup.select(".sc-journal__table--scroll-part td.sc-journal__table--cell-value")
+
+    if not header_cells or not grade_cells:
+        return "⚠️ Оценки не найдены."
+
+    dates = [h.get_text(strip=True) for h in header_cells]
+    grades = [g.get_text(strip=True) for g in grade_cells]
+
+    numeric = [int(g) for g in grades if g.isdigit()]
+    avg = sum(numeric) / len(numeric) if numeric else 0
+
+    result = "📘 *Журнал:*\n" + "\n".join(
+        f"{d}: {g or '—'}" for d, g in zip(dates, grades)
+    ) + f"\n\n📊 Средний балл: {avg:.1f}"
+    return result
