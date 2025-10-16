@@ -1,32 +1,19 @@
 import httpx
 from bs4 import BeautifulSoup
 
-# URL для входа и журнала
-LOGIN_URL = "https://college.snation.kz/kz/tko/login"
 JOURNAL_URL = "https://college.snation.kz/ru/tko/control/journals"
 
-
-async def get_cookie(iin: str, password: str) -> dict | None:
+async def get_journal_with_cookie(cookie_string: str) -> str | None:
     """
-    Авторизация и получение cookie (без хранения пароля)
+    Получение HTML журнала, используя cookie из строки.
     """
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        data = {"iin": iin, "password": password}
+    # Преобразуем cookie строку в dict
+    cookies = {}
+    for pair in cookie_string.split(";"):
+        if "=" in pair:
+            key, value = pair.strip().split("=", 1)
+            cookies[key] = value
 
-        resp = await client.post(LOGIN_URL, data=data, headers=headers)
-        # Проверяем успешный вход
-        if "Құпия сөз" in resp.text or "Жүйеге кіру" in resp.text or resp.status_code != 200:
-            return None
-
-        # Возвращаем словарь cookie
-        return {c.name: c.value for c in client.cookies.jar}
-
-
-async def get_journal_with_cookie(cookies: dict) -> str | None:
-    """
-    Получение HTML журнала, используя cookie сессии
-    """
     async with httpx.AsyncClient(follow_redirects=True, cookies=cookies) as client:
         resp = await client.get(JOURNAL_URL)
         if resp.status_code != 200 or "Журнал" not in resp.text:
