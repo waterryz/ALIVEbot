@@ -62,8 +62,8 @@ async def handle_cookie(message: types.Message):
         builder.button(text=name, callback_data=name)
     builder.adjust(1)
 
-    await message.answer("✅ Cookie сохранены!
-Выбери предмет:", reply_markup=builder.as_markup())
+    await message.answer("✅ Cookie сохранены! Выбери предмет:", 
+                         reply_markup=builder.as_markup())
 
 @dp.callback_query()
 async def handle_subject(callback: types.CallbackQuery):
