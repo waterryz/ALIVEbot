@@ -3,12 +3,11 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from parser import login_and_get_grades, extract_grades_from_html
 
-# 🔐 Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APP_URL = os.getenv("APP_URL")  # без https:// в коде не вставляй
+APP_URL = os.getenv("APP_URL")
 
 if not BOT_TOKEN or not APP_URL:
-    raise ValueError("❌ Не найдены переменные BOT_TOKEN или APP_URL!")
+    raise ValueError("❌ BOT_TOKEN или APP_URL не заданы!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Привет! Введи ИИН и пароль через пробел:\nПример: 123456789012 1234pass")
@@ -34,9 +33,8 @@ if __name__ == "__main__":
 
     print("🚀 Устанавливаем Webhook...")
 
-    # Запуск с Webhook
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8080)),
-        webhook_url=f"{APP_URL}/webhook/{BOT_TOKEN}",
+        webhook_url=f"{APP_URL}/webhook/{BOT_TOKEN}"
     )
