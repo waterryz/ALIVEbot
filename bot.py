@@ -11,18 +11,21 @@ from telegram.ext import (
 )
 from parser import get_journal_with_cookie, extract_grades_from_html
 
+# --- Конфигурация ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 
 if not BOT_TOKEN or not APP_URL:
     raise ValueError("❌ BOT_TOKEN или APP_URL не заданы!")
 
+APP_URL = APP_URL.rstrip("/")
+
 COOKIE_FILE = "cookies.json"
 if not os.path.exists(COOKIE_FILE):
     with open(COOKIE_FILE, "w", encoding="utf-8") as f:
         json.dump({}, f)
 
-# --- Cookie helpers ---
+# --- Cookie-хранилище ---
 def save_cookie(user_id: int, cookie: str):
     with open(COOKIE_FILE, "r+", encoding="utf-8") as f:
         try:
@@ -42,7 +45,7 @@ def load_cookie(user_id: int):
             return None
         return data.get(str(user_id))
 
-# --- Handlers ---
+# --- Обработчики Telegram ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Отправь свою cookie (например, `college_session=...; XSRF-TOKEN=...`), "
@@ -82,7 +85,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     grades = extract_grades_from_html(html)
     await update.message.reply_text(grades, parse_mode="Markdown")
 
-# --- Flask server (для Render) ---
+# --- Flask сервер ---
 app_flask = Flask(__name__)
 
 telegram_app = (
@@ -97,18 +100,17 @@ telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_
 
 @app_flask.route("/")
 def home():
-    return "✅ Бот запущен и ждёт обновлений от Telegram."
+    return "✅ Бот работает. Telegram Webhook активен."
 
 @app_flask.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, telegram_app.bot)
+    # Обработка обновления асинхронно
     telegram_app.create_task(telegram_app.process_update(update))
     return "ok", 200
 
 if __name__ == "__main__":
     print("🚀 Flask-сервер запущен на Render...")
-
-    telegram_app.run_async()
     port = int(os.environ.get("PORT", 8080))
     app_flask.run(host="0.0.0.0", port=port)
