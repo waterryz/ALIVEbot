@@ -2,94 +2,86 @@ import os
 import json
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
 )
-from parser import get_cookie, get_journal_with_cookie, extract_grades_from_html
+from parser import get_journal_with_cookie, extract_grades_from_html
 
-# Переменные окружения Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 APP_URL = os.getenv("APP_URL")
 
 if not BOT_TOKEN or not APP_URL:
     raise ValueError("❌ BOT_TOKEN или APP_URL не заданы!")
 
-# Простое хранилище cookie (можно заменить на Redis/БД)
 COOKIE_FILE = "cookies.json"
 if not os.path.exists(COOKIE_FILE):
     with open(COOKIE_FILE, "w") as f:
         json.dump({}, f)
 
-
-def save_cookie(iin, cookies):
+def save_cookie(user_id, cookie):
     with open(COOKIE_FILE, "r+") as f:
         data = json.load(f)
-        data[iin] = cookies
+        data[str(user_id)] = cookie
         f.seek(0)
         json.dump(data, f)
         f.truncate()
 
-
-def load_cookie(iin):
+def load_cookie(user_id):
     with open(COOKIE_FILE, "r") as f:
         data = json.load(f)
-        return data.get(iin)
-
+        return data.get(str(user_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Введи ИИН и пароль через пробел:\nПример: 123456789012 1234pass"
+        "👋 Привет! Отправь свою cookie (например, `laravel_session=...; XSRF-TOKEN=...`), "
+        "и я покажу твои оценки."
     )
 
+async def handle_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cookie_string = update.message.text.strip()
 
-async def handle_creds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        text = update.message.text.strip()
-        if " " not in text:
-            await update.message.reply_text("⚠️ Формат: ИИН пароль (через пробел)")
-            return
+    # Сохраняем cookie
+    save_cookie(user_id, cookie_string)
+    await update.message.reply_text("✅ Cookie сохранена! Загружаю журнал...")
 
-        iin, password = text.split()
+    html = await get_journal_with_cookie(cookie_string)
+    if not html:
+        await update.message.reply_text("❌ Не удалось войти с этой cookie. Возможно, она устарела.")
+        return
 
-        await update.message.reply_text("🔐 Входим в систему...")
+    grades = extract_grades_from_html(html)
+    await update.message.reply_text(grades, parse_mode="Markdown")
 
-        # 1️⃣ Пробуем использовать сохранённую cookie
-        cookies = load_cookie(iin)
-        if cookies:
-            html = await get_journal_with_cookie(cookies)
-            if html:
-                grades = extract_grades_from_html(html)
-                await update.message.reply_text(grades, parse_mode="Markdown")
-                return
-            else:
-                await update.message.reply_text("♻️ Сессия истекла, пробую войти заново...")
+async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cookie = load_cookie(user_id)
 
-        # 2️⃣ Логинимся и сохраняем cookie
-        cookies = await get_cookie(iin, password)
-        if not cookies:
-            await update.message.reply_text("❌ Неверный ИИН или пароль.")
-            return
+    if not cookie:
+        await update.message.reply_text("⚠️ У тебя нет сохранённой cookie. Отправь её снова.")
+        return
 
-        save_cookie(iin, cookies)
+    await update.message.reply_text("♻️ Обновляю данные журнала...")
 
-        html = await get_journal_with_cookie(cookies)
-        if not html:
-            await update.message.reply_text("⚠️ Не удалось получить журнал.")
-            return
+    html = await get_journal_with_cookie(cookie)
+    if not html:
+        await update.message.reply_text("❌ Cookie устарела, отправь новую.")
+        return
 
-        grades = extract_grades_from_html(html)
-        await update.message.reply_text(grades, parse_mode="Markdown")
-
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Ошибка: {e}")
-
+    grades = extract_grades_from_html(html)
+    await update.message.reply_text(grades, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🚀 Запуск Telegram-бота через Webhook на Render...")
+    print("🚀 Запуск Telegram-бота на Render...")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_creds))
+    app.add_handler(CommandHandler("refresh", refresh))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cookie))
 
     app.run_webhook(
         listen="0.0.0.0",
