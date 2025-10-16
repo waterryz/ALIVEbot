@@ -44,14 +44,9 @@ subjects = {
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.answer(
-        "👋 Привет! Это бот SmartNation College.
-
-"
-        "Отправь cookie строкой:
-"
-        "`college_session=...; XSRF-TOKEN=...; region_id=...`
-
-"
+        "👋 Привет! Это бот SmartNation College."
+        "Отправь cookie строкой:"
+        "`college_session=...; XSRF-TOKEN=...; region_id=...`"
         "После этого выбери предмет из меню.",
         parse_mode="Markdown"
     )
