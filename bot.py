@@ -1,7 +1,6 @@
 import os
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import pg8000
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -22,16 +21,15 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
-DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 
-if not TOKEN:
-    raise Exception("❌ BOT_TOKEN не найден в Render Environment")
-if not DATABASE_URL:
-    raise Exception("❌ DATABASE_URL не найден (строка из Neon.tech)")
+# Параметры БД Neon
+PG_USER = "neondb_owner"
+PG_PASSWORD = "npg_wh0zI9NHUVBe"
+PG_HOST = "ep-lively-river-agz7orw8-pooler.c-2.eu-central-1.aws.neon.tech"
+PG_DB = "neondb"
 
 # ──────────────────────────────────────────────
-# Aiogram 3
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -39,53 +37,70 @@ WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # ──────────────────────────────────────────────
-# PostgreSQL helpers
+# Подключение к базе через pg8000
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode="require", cursor_factory=RealDictCursor)
+    return pg8000.connect(
+        user=PG_USER,
+        password=PG_PASSWORD,
+        host=PG_HOST,
+        database=PG_DB,
+        port=5432,
+        ssl_context=True
+    )
 
 def init_db():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    login TEXT,
-                    password TEXT
-                );
-            """)
-            conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            login TEXT,
+            password TEXT
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def save_user(user_id, login, password):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO users (user_id, login, password)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id)
-                DO UPDATE SET login = EXCLUDED.login, password = EXCLUDED.password;
-            """, (user_id, login, password))
-            conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO users (user_id, login, password)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id)
+        DO UPDATE SET login = EXCLUDED.login, password = EXCLUDED.password;
+    """, (user_id, login, password))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_user(user_id):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT login, password FROM users WHERE user_id = %s;", (user_id,))
-            return cur.fetchone()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT login, password FROM users WHERE user_id = %s;", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    return {"login": row[0], "password": row[1]}
 
 def delete_user(user_id):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM users WHERE user_id = %s;", (user_id,))
-            conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE user_id = %s;", (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # ──────────────────────────────────────────────
-# FSM для авторизации
+# FSM
 class AuthForm(StatesGroup):
     login = State()
     password = State()
 
 # ──────────────────────────────────────────────
-# Меню
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -94,7 +109,6 @@ def menu_kb():
     ])
 
 # ──────────────────────────────────────────────
-# Команды
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
@@ -146,7 +160,6 @@ async def logout_cmd(message: types.Message):
     await message.answer("🚪 Данные удалены.")
 
 # ──────────────────────────────────────────────
-# Callback кнопки
 @dp.callback_query(F.data == "login")
 async def cb_login(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("✍️ Введи логин SmartNation:")
@@ -174,7 +187,6 @@ async def cb_logout(callback: types.CallbackQuery):
     await callback.answer()
 
 # ──────────────────────────────────────────────
-# Webhook / сервер
 async def handle(request: web.Request):
     try:
         data = await request.json()
