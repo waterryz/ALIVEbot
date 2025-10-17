@@ -24,10 +24,17 @@ dp = Dispatcher()
 app = Flask(__name__)
 
 # ───────────────────────────────
+# ОДИН ГЛОБАЛЬНЫЙ EVENT LOOP
+# ───────────────────────────────
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+# ───────────────────────────────
 # ИНИЦИАЛИЗАЦИЯ БАЗЫ
 # ───────────────────────────────
 try:
     init_db()
+    logging.info("✅ Таблица users готова к использованию")
 except Exception as e:
     logging.error(f"❌ Ошибка инициализации базы данных: {e}")
 
@@ -39,7 +46,7 @@ example_button = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ───────────────────────────────
-# /START
+# ОБРАБОТЧИК /START
 # ───────────────────────────────
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -53,7 +60,7 @@ async def start_handler(message: types.Message):
     await message.answer(text, parse_mode="Markdown", reply_markup=example_button)
 
 # ───────────────────────────────
-# КОЛБЭК ПРИ НАЖАТИИ НА КНОПКУ
+# ПРИМЕР ВВОДА
 # ───────────────────────────────
 @dp.callback_query()
 async def show_example(callback: types.CallbackQuery):
@@ -68,7 +75,7 @@ async def show_example(callback: types.CallbackQuery):
         await callback.answer()
 
 # ───────────────────────────────
-# ОСНОВНАЯ ЛОГИКА (ИИН + ПАРОЛЬ)
+# ОБРАБОТКА ДАННЫХ (ИИН + ПАРОЛЬ)
 # ───────────────────────────────
 @dp.message()
 async def credentials_handler(message: types.Message):
@@ -87,7 +94,6 @@ async def credentials_handler(message: types.Message):
 
         os.makedirs("screenshots", exist_ok=True)
 
-        # Обработка всех предметов
         for subject in JOURNAL_LINKS.keys():
             await message.answer(f"📘 Загружаю журнал: {subject}...")
             result = await get_screenshot(login, password, subject)
@@ -115,14 +121,14 @@ def index():
 def webhook():
     try:
         update = types.Update(**request.json)
-        asyncio.run(dp.feed_update(bot, update))
+        loop.create_task(dp.feed_update(bot, update))
         return "ok", 200
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
         return "error", 500
 
 # ───────────────────────────────
-# ЗАПУСК
+# ЗАПУСК СЕРВЕРА
 # ───────────────────────────────
 if __name__ == "__main__":
     logging.info("🚀 Flask сервер запущен и ожидает обновления Telegram...")
