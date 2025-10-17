@@ -21,38 +21,44 @@ def get_screenshot(iin, password, subject):
             print("🌐 Переход на сайт...")
             page.goto(LOGIN_URL, timeout=60000)
 
-            # Заполняем форму
+            # Проверим наличие полей
+            if not page.locator("input[name='iin']").is_visible():
+                print("⚠️ Поле для ИИН не найдено.")
+                browser.close()
+                return "login_failed"
+
+            # Заполняем логин и пароль
             page.fill("input[name='iin']", iin)
             page.fill("input[name='password']", password)
             page.click("button[type='submit']")
 
-            # Ждем перехода после логина
+            print("🔐 Введены данные, ожидаем вход...")
             page.wait_for_timeout(5000)
 
-            if "login" in page.url or "error" in page.url:
-                print("❌ Не удалось войти в аккаунт — проверь ИИН и пароль")
+            # Проверяем, удалось ли войти
+            if "login" in page.url or page.url.endswith("/login"):
+                print("❌ Неверный логин или пароль.")
                 browser.close()
-                return None
+                return "login_failed"
 
             # Проверяем предмет
             journal_url = JOURNAL_LINKS.get(subject)
             if not journal_url:
                 print("❌ Неверный предмет:", subject)
                 browser.close()
-                return None
+                return "wrong_subject"
 
             print("📖 Открываю журнал:", subject)
             page.goto(journal_url, timeout=60000)
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(4000)
 
-            # Создаём папку, если нет
+            # Создаём папку
             os.makedirs("screenshots", exist_ok=True)
             screenshot_path = f"screenshots/{subject}.png"
-
             page.screenshot(path=screenshot_path, full_page=True)
-            browser.close()
 
             print("✅ Скриншот сохранен:", screenshot_path)
+            browser.close()
             return screenshot_path
 
     except Exception as e:
