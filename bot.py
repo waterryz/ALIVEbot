@@ -19,6 +19,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.utils import ChromeType
 from html import escape
 
 # ──────────────────────────────
@@ -231,8 +232,9 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # Без binary_location — Chrome сам подхватится с webdriver-manager
-    service = Service(ChromeDriverManager().install())
+    # Render-friendly Chrome запуск через Chromium
+    chrome_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
+    service = Service(chrome_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     driver.get("https://college.snation.kz/kz/tko/login")
