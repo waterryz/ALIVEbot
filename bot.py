@@ -43,7 +43,7 @@ async def start_handler(message: Message):
     )
 
 @dp.message()
-async def credentials_handler(message: Message):
+async def credentials_handler(message: types.Message):
     try:
         creds = message.text.strip().split()
         if len(creds) != 2:
@@ -52,14 +52,27 @@ async def credentials_handler(message: Message):
 
         login, password = creds
         save_credentials(message.from_user.id, login, password)
-        await message.answer("✅ Данные сохранены! Получаю информацию...")
+        await message.answer("✅ Данные сохранены! Получаю скриншоты журналов...")
 
-        result = await parse_site(login, password)
-        await message.answer(result or "Не удалось получить данные 😔")
+        # Импортируем функцию
+        from parser import JOURNAL_LINKS, get_screenshot
+
+        for subject in JOURNAL_LINKS.keys():
+            await message.answer(f"📘 Загружаю журнал: {subject}...")
+
+            screenshot_path = get_screenshot(login, password, subject)
+            if screenshot_path and os.path.exists(screenshot_path):
+                with open(screenshot_path, "rb") as photo:
+                    await message.answer_photo(photo, caption=f"✅ {subject}")
+            else:
+                await message.answer(f"❌ Не удалось загрузить {subject}")
+
+        await message.answer("✅ Все доступные журналы загружены!")
 
     except Exception as e:
         logging.error(f"Ошибка при обработке сообщения: {e}")
-        await message.answer("⚠️ Произошла ошибка. Попробуй снова.")
+        await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
+
 
 # ───────────────────────────────
 # Flask webhook endpoints
