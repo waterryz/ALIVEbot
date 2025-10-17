@@ -109,9 +109,17 @@ async def handle_message(message: types.Message):
 
     try:
         path = get_screenshot(login, password, subject)
-        if not path:
-            await message.answer("⚠️ Не удалось получить скриншот. Проверь данные или предмет.")
+        
+        if path == "login_failed":
+            await message.answer("❌ Неверный ИИН или пароль. Проверь и попробуй снова.")
             return
+        elif path == "wrong_subject":
+            await message.answer("⚠️ Такого предмета нет. Проверь название.")
+            return
+        elif not path:
+            await message.answer("⚠️ Ошибка при получении данных. Попробуй позже.")
+            return
+
 
         await message.answer_photo(photo=open(path, "rb"), caption=f"📸 Журнал по предмету {subject}")
     except Exception as e:
