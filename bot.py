@@ -226,19 +226,19 @@ JOURNALS = {
 # ──────────────────────────────
 def make_screenshot(login, password, url, path):
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.binary_location = "/usr/bin/chromium-browser"
 
+    # Без binary_location — Chrome сам подхватится с webdriver-manager
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     driver.get("https://college.snation.kz/kz/tko/login")
 
     try:
-        WebDriverWait(driver, 15).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='ЖСН']"))
         )
 
@@ -246,12 +246,12 @@ def make_screenshot(login, password, url, path):
         driver.find_element(By.CSS_SELECTOR, "input[aria-label='Құпия сөз']").send_keys(password)
         driver.find_element(By.XPATH, "//button[contains(., 'Жүйеге кіру')]").click()
 
-        WebDriverWait(driver, 15).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CLASS_NAME, "sn-page"))
         )
 
         driver.get(url)
-        WebDriverWait(driver, 15).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.TAG_NAME, "table"))
         )
 
