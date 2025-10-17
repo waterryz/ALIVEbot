@@ -121,10 +121,18 @@ async def send_journal(c: types.CallbackQuery):
         await c.message.answer(f"❌ Ошибка: {e}")
 
 # --- Webhook / aiohttp ---
-async def handle(req: web.Request):
-    data = await req.json()
-    await dp.process_update(types.Update(**data))
-    return web.Response(status=200)
+async def handle(request: web.Request):
+    try:
+        data = await request.json()
+        update = types.Update(**data)
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        import traceback
+        print("❌ Ошибка вебхука:", e)
+        traceback.print_exc()
+        return web.Response(status=500, text=str(e))
+    return web.Response(status=200, text="ok")
+
 
 async def on_start(app):
     await bot.delete_webhook(drop_pending_updates=True)
