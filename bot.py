@@ -134,11 +134,44 @@ async def start(message: types.Message):
         "• /login — авторизация\n"
         "• /account — просмотр учётки\n"
         "• /journals — открыть журналы\n"
-        "• /logout — удалить данные"
+        "• /logout — удалить данные\n\n"
         "Создал: Cычёв Александр ПО2408",
         reply_markup=menu_kb()
     )
 
+# ──────────────────────────────
+@dp.callback_query(F.data == "login")
+async def cb_login(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("✍️ Введи логин (ЖСН):")
+    await state.set_state(AuthForm.login)
+    await callback.answer()
+
+@dp.callback_query(F.data == "journals")
+async def cb_journals(callback: types.CallbackQuery):
+    await callback.message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
+    await callback.answer()
+
+@dp.callback_query(F.data == "account")
+async def cb_account(callback: types.CallbackQuery):
+    row = get_user(callback.from_user.id)
+    if not row:
+        await callback.message.answer("❌ Нет данных. Используй /login.")
+    else:
+        masked = "•" * max(8, len(row['password']) // 2)
+        await callback.message.answer(
+            f"👤 <b>SmartNation аккаунт</b>\n"
+            f"Логин: <code>{row['login']}</code>\n"
+            f"Пароль: <code>{masked}</code>"
+        )
+    await callback.answer()
+
+@dp.callback_query(F.data == "logout")
+async def cb_logout(callback: types.CallbackQuery):
+    delete_user(callback.from_user.id)
+    await callback.message.answer("🚪 Данные удалены.")
+    await callback.answer()
+
+# ──────────────────────────────
 @dp.message(Command("login"))
 async def login_cmd(message: types.Message, state: FSMContext):
     await state.set_state(AuthForm.login)
@@ -197,8 +230,6 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-
-    # путь к chromium в Render
     chrome_options.binary_location = "/usr/bin/chromium-browser"
 
     service = Service(ChromeDriverManager().install())
@@ -228,9 +259,8 @@ def make_screenshot(login, password, url, path):
         driver.save_screenshot(path)
 
     except Exception as e:
-        print(f"Ошибка входа или загрузки: {e}")
         driver.save_screenshot("error.png")
-        raise
+        raise e
     finally:
         driver.quit()
 
