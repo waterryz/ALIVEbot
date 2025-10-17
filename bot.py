@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import os, time, asyncio, sqlite3
+import logging
+logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 from dotenv import load_dotenv
 from aiohttp import web
@@ -164,4 +166,5 @@ def screenshot_url(driver, url, name):
     return path
 
 if __name__ == "__main__":
+    print("🚀 Запуск бота...")
     main()
