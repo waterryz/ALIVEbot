@@ -18,6 +18,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from html import escape
 
 # ──────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -195,9 +196,9 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # Новый способ запуска Chrome
-    service = webdriver.ChromeService(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    # ✅ путь к chromium в Render
+    chrome_options.binary_location = "/usr/bin/chromium-browser"
+    driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
 
     driver.get("https://college.snation.kz/kz/tko/login")
 
@@ -210,7 +211,6 @@ def make_screenshot(login, password, url, path):
         driver.find_element(By.CSS_SELECTOR, "input[aria-label='Құпия сөз']").send_keys(password)
         driver.find_element(By.XPATH, "//button[contains(., 'Жүйеге кіру')]").click()
 
-        # ждём появления основной страницы
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CLASS_NAME, "sn-page"))
         )
@@ -226,9 +226,9 @@ def make_screenshot(login, password, url, path):
     except Exception as e:
         print(f"Ошибка входа или загрузки: {e}")
         driver.save_screenshot("error.png")
+        raise
     finally:
         driver.quit()
-
 
 # ──────────────────────────────
 @dp.callback_query(F.data.startswith("journal_"))
@@ -251,7 +251,7 @@ async def cb_journal(callback: types.CallbackQuery):
         await asyncio.to_thread(make_screenshot, login, password, url, path)
         await bot.send_photo(callback.from_user.id, open(path, "rb"))
     except Exception as e:
-        await callback.message.answer(f"⚠️ Ошибка при загрузке журнала: {e}")
+        await callback.message.answer(f"⚠️ Ошибка при загрузке журнала:\n<code>{escape(str(e))}</code>")
     finally:
         if os.path.exists(path):
             os.remove(path)
