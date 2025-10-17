@@ -3,6 +3,7 @@ import logging
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
+from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
 # ──────────────────────────────────────────────
@@ -21,7 +22,8 @@ PORT = int(os.getenv("PORT", 10000))
 if not TOKEN:
     raise Exception("❌ BOT_TOKEN не найден в Render Environment")
 
-bot = Bot(token=TOKEN, parse_mode="HTML")
+# 👇 Новый стиль инициализации бота для aiogram 3.13+
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
@@ -31,22 +33,22 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 # Хэндлер /start
 @dp.message(CommandStart())
 async def start(message: types.Message):
-    await message.answer("👋 Привет! Я бот SmartNation.\nЯ уже подключён к вебхуку и готов к работе ✅")
+    await message.answer("👋 Привет! Я бот SmartNation.\nРаботаю через вебхук и полностью готов ✅")
 
 # ──────────────────────────────────────────────
-# Webhook обработчик
+# Обработчик webhook
 async def handle(request: web.Request):
     try:
         data = await request.json()
         update = types.Update(**data)
-        await dp.feed_update(bot, update)  # ✅ правильный метод
+        await dp.feed_update(bot, update)  # ✅ новый метод
     except Exception as e:
-        logger.exception("Ошибка при обработке webhook запроса: %s", e)
+        logger.exception("❌ Ошибка при обработке webhook запроса: %s", e)
         return web.Response(status=500, text="Internal Server Error")
     return web.Response(status=200, text="ok")
 
 # ──────────────────────────────────────────────
-# Проверочный роут (для Render ping)
+# Проверочный маршрут
 async def root(request):
     return web.Response(text="Bot is running ✅")
 
