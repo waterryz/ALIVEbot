@@ -3,63 +3,91 @@ import logging
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 from users_db import init_db, save_credentials
-from parser import parse_site  # если у тебя парсер называется иначе — поменяй
 from dotenv import load_dotenv
 
 # ───────────────────────────────
-# Настройка окружения
+# НАСТРОЙКА ОКРУЖЕНИЯ
 # ───────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise Exception("❌ Не найден BOT_TOKEN в переменных окружения")
+    raise Exception("❌ BOT_TOKEN не найден в Render Settings")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = Flask(__name__)
 
 # ───────────────────────────────
-# Инициализация базы данных
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ
 # ───────────────────────────────
 try:
     init_db()
-    logging.info("✅ База данных инициализирована")
 except Exception as e:
-    logging.error(f"❌ Ошибка инициализации базы: {e}")
+    logging.error(f"❌ Ошибка инициализации базы данных: {e}")
 
 # ───────────────────────────────
-# Обработчики команд
+# КНОПКА ПРИМЕРА
+# ───────────────────────────────
+example_button = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="📖 Пример формата", callback_data="example")]
+])
+
+# ───────────────────────────────
+# ОБРАБОТЧИК /start
 # ───────────────────────────────
 @dp.message(CommandStart())
-async def start_handler(message: Message):
-    await message.answer(
-        "Привет 👋 Это ALIVE Bot!\n"
-        "Отправь логин и пароль, чтобы получить данные из журнала."
+async def start_handler(message: types.Message):
+    text = (
+        "Привет 👋 Это *ALIVE Bot!*\n\n"
+        "📘 Я помогу тебе получить скриншоты журналов с сайта колледжа.\n\n"
+        "🔐 Отправь свои данные в формате:\n"
+        "`ИИН ПАРОЛЬ`\n\n"
+        "После этого я начну загрузку твоих журналов 📊"
     )
+    await message.answer(text, parse_mode="Markdown", reply_markup=example_button)
 
+# ───────────────────────────────
+# КОЛБЭК ПРИ НАЖАТИИ НА КНОПКУ "ПРИМЕР"
+# ───────────────────────────────
+@dp.callback_query()
+async def show_example(callback: types.CallbackQuery):
+    if callback.data == "example":
+        example_text = (
+            "🧩 *Пример правильного ввода:*\n"
+            "`123456888999 888999abc`\n\n"
+            "📌 Первое — ИИН, второе — пароль от сайта колледжа.\n"
+            "⚠️ Не пиши запятые, точки и лишние символы!"
+        )
+        await callback.message.answer(example_text, parse_mode="Markdown")
+        await callback.answer()
+
+# ───────────────────────────────
+# ОБРАБОТКА ДАННЫХ (ИИН + ПАРОЛЬ)
+# ───────────────────────────────
 @dp.message()
 async def credentials_handler(message: types.Message):
     try:
         creds = message.text.strip().split()
         if len(creds) != 2:
-            await message.answer("❗ Введи логин и пароль через пробел.")
+            await message.answer("❗ Введи логин и пароль через пробел.\n\nПример: `090120555841 555841abc`", parse_mode="Markdown")
             return
 
         login, password = creds
         save_credentials(message.from_user.id, login, password)
-        await message.answer("✅ Данные сохранены! Получаю скриншоты журналов...")
+        await message.answer("✅ Данные сохранены! Загружаю журналы...")
 
-        # Импортируем функцию
         from parser import JOURNAL_LINKS, get_screenshot
+        import os
+
+        os.makedirs("screenshots", exist_ok=True)
 
         for subject in JOURNAL_LINKS.keys():
             await message.answer(f"📘 Загружаю журнал: {subject}...")
-
             screenshot_path = get_screenshot(login, password, subject)
             if screenshot_path and os.path.exists(screenshot_path):
                 with open(screenshot_path, "rb") as photo:
@@ -67,15 +95,14 @@ async def credentials_handler(message: types.Message):
             else:
                 await message.answer(f"❌ Не удалось загрузить {subject}")
 
-        await message.answer("✅ Все доступные журналы загружены!")
+        await message.answer("✅ Все доступные журналы отправлены!")
 
     except Exception as e:
         logging.error(f"Ошибка при обработке сообщения: {e}")
         await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
 
-
 # ───────────────────────────────
-# Flask webhook endpoints
+# FLASK WEBHOOK ENDPOINTS
 # ───────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
@@ -85,27 +112,15 @@ def index():
 def webhook():
     try:
         update = types.Update(**request.json)
-
-        # создаём новый event loop для каждого запроса
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(dp.feed_update(bot, update))
-
+        asyncio.run(dp.feed_update(bot, update))  # ✅ стабильный запуск
         return "ok", 200
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
         return "error", 500
 
-
 # ───────────────────────────────
-# Запуск Flask + aiogram
+# ЗАПУСК FLASK СЕРВЕРА
 # ───────────────────────────────
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    logging.info("🚀 Flask сервер запущен")
-    try:
-        app.run(host="0.0.0.0", port=10000)
-    except Exception as e:
-        logging.error(f"❌ Ошибка при запуске Flask: {e}")
+    logging.info("🚀 Flask сервер запущен и ожидает обновления Telegram...")
+    app.run(host="0.0.0.0", port=10000)
