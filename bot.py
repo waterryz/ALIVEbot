@@ -1,17 +1,22 @@
 import os
 import asyncio
-import sqlite3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from flask import Flask, request
 from playwright.async_api import async_playwright
 from users_db import init_db, save_user, get_user
 
-TOKEN = "8438829706:AAHiv7tHdDBMR3UoGXn3CcUHWuuIVFBAvU0"
-WEBHOOK_URL = f"https://alivebot-7pa2.onrender.com/webhook/{TOKEN}"
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is required")
 
-# путь к базе (учтён persistent диск)
-DB_PATH = os.getenv("DB_PATH", "users.db")
+webhook_base_url = os.getenv("WEBHOOK_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL")
+if not webhook_base_url:
+    raise RuntimeError(
+        "WEBHOOK_BASE_URL or RENDER_EXTERNAL_URL environment variable is required"
+    )
+
+WEBHOOK_URL = f"{webhook_base_url.rstrip('/')}/webhook/{TOKEN}"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -96,7 +101,8 @@ async def handle_subject(callback: types.CallbackQuery):
 
     try:
         await take_screenshot(iin, password, link, screenshot_path)
-        await callback.message.answer_photo(photo=open(screenshot_path, "rb"))
+        with open(screenshot_path, "rb") as screenshot:
+            await callback.message.answer_photo(photo=screenshot)
     except Exception as e:
         print(f"Ошибка скриншота: {e}")
         await callback.message.answer("❌ Не удалось загрузить журнал. Проверь логин и пароль.")
