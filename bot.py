@@ -207,9 +207,8 @@ async def on_start(app: web.Application):
     logger.info("✅ Webhook установлен и база готова!")
 
 async def on_stop(app: web.Application):
-    await bot.delete_webhook()
-    await bot.session.close()
-    logger.info("🛑 Webhook удалён, бот остановлен")
+    logger.info("🛑 Завершение процесса (Render control)")
+
 
 def main():
     app = web.Application()
