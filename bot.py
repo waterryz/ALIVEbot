@@ -110,6 +110,22 @@ async def credentials_handler(message: types.Message):
         logging.error(f"Ошибка при обработке сообщения: {e}")
         await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
 
+
+# ───────────────────────────────
+# УСТАНОВКА WEBHOOK ПРИ ЗАПУСКЕ
+# ───────────────────────────────
+import requests
+
+WEBHOOK_URL = f"https://alivebot-7pa2.onrender.com/webhook/{BOT_TOKEN}"
+
+try:
+    set_webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
+    r = requests.get(set_webhook_url)
+    logging.info(f"🌐 Webhook обновлён: {r.text}")
+except Exception as e:
+    logging.error(f"❌ Не удалось установить webhook: {e}")
+
+
 # ───────────────────────────────
 # FLASK WEBHOOK
 # ───────────────────────────────
