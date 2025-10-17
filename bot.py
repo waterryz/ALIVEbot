@@ -138,9 +138,19 @@ async def on_stop(app):
 def main():
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle)
+
+    # ✅ добавь GET / чтобы Render и Telegram не ловили 404
+    async def root(request):
+        return web.Response(text="Bot is running ✅")
+
+    app.router.add_get("/", root)
+
     app.on_startup.append(on_start)
     app.on_cleanup.append(on_stop)
+
+    print("🚀 Bot starting on port", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT)
+
 
 # --- Selenium ---
 def create_logged_driver(login, password):
