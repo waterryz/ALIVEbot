@@ -11,6 +11,7 @@ JOURNAL_LINKS = {
     "Экономика": "https://college.snation.kz/kz/tko/control/journals/873760",
 }
 
+
 def get_screenshot(iin, password, subject):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
