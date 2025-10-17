@@ -41,3 +41,26 @@ def get_screenshot(iin, password, subject):
 
         browser.close()
         return screenshot_path
+
+import asyncio
+
+# ───────────────────────────────
+# Асинхронная обёртка для бота
+# ───────────────────────────────
+async def parse_site(login: str, password: str):
+    """
+    Универсальная функция для Telegram-бота.
+    Делает скриншоты всех журналов и возвращает ссылки.
+    """
+    subjects = list(JOURNAL_LINKS.keys())
+    results = []
+
+    for subject in subjects:
+        screenshot_path = get_screenshot(login, password, subject)
+        if screenshot_path:
+            results.append(f"✅ {subject}: {screenshot_path}")
+        else:
+            results.append(f"❌ {subject}: ошибка входа или загрузки")
+
+    return "\n".join(results)
+
