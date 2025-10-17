@@ -1,0 +1,5 @@
+aiogram==3.13.1
+playwright==1.48.0
+Flask==3.0.3
+sqlite3-binary
+gunicorn==23.0.0
