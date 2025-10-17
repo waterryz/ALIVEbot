@@ -1,85 +1,51 @@
 import os
 import asyncio
-from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from parser import get_screenshot
-from db import init_db, save_user, get_user
+from flask import Flask, request
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "YOUR_TOKEN_HERE"
-WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL", "https://botalive.onrender.com")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+TOKEN = "8438829706:AAHiv7tHdDBMR3UoGXn3CcUHWuuIVFBAvU0"
+WEBHOOK_URL = f"https://alivebot-7pa2.onrender.com/webhook/{TOKEN}"
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+# === Flask app ===
 app = Flask(__name__)
 
-SUBJECTS = ["Python", "БД", "ИКТ", "Графика", "Физра", "Экономика"]
-
-@app.route("/")
+@app.route('/')
 def home():
-    return "✅ SmartNation Bot работает!"
+    return "✅ SmartNation бот активен!"
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
+@app.post(f"/webhook/{TOKEN}")
 async def webhook():
-    update = types.Update.model_validate(request.json, strict=False)
-    await dp.feed_update(bot, update)
-    return "ok"
+    try:
+        update = types.Update.model_validate(request.json, strict=False)
+        await dp.feed_update(bot, update)
+        return "ok"
+    except Exception as e:
+        print(f"❌ Ошибка в webhook: {e}")
+        return "error", 500
 
+# === Aiogram handlers ===
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.answer(
-        "👋 Привет! Введи свой *ИИН и пароль* через пробел:\n\n`123456789012 12345678`",
-        parse_mode="Markdown"
+        "👋 Привет! Я бот колледжа SmartNation.\n"
+        "Введи свой ИИН и пароль для входа в журнал 📘"
     )
 
-@dp.message()
-async def handle_login(message: types.Message):
-    user_id = message.from_user.id
-    text = message.text.strip()
-    user_data = get_user(user_id)
-
-    if not user_data:
-        try:
-            iin, password = text.split()
-            save_user(user_id, iin, password)
-            builder = InlineKeyboardBuilder()
-            for subj in SUBJECTS:
-                builder.button(text=subj, callback_data=subj)
-            builder.adjust(2)
-            await message.answer("✅ Сохранено! Теперь выбери предмет:", reply_markup=builder.as_markup())
-        except ValueError:
-            await message.answer("⚠️ Введи ИИН и пароль через пробел.")
-    else:
-        await message.answer("📚 Выбери предмет из списка ниже:")
-
-@dp.callback_query()
-async def handle_subject(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if not user:
-        await callback.message.answer("⚠️ Сначала введи ИИН и пароль.")
-        return
-
-    iin, password = user
-    subject = callback.data
-    await callback.message.answer(f"📸 Загружаю журнал: {subject}...")
-
-    path = get_screenshot(iin, password, subject)
-    if not path:
-        await callback.message.answer("❌ Не удалось войти или загрузить журнал.")
-        return
-
-    await bot.send_photo(chat_id=user_id, photo=open(path, "rb"))
-    await callback.message.answer("✅ Готово!")
-
+# === Функция запуска ===
 async def on_startup():
-    init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
     print(f"✅ Вебхук установлен: {WEBHOOK_URL}")
 
-if __name__ == "__main__":
-    asyncio.run(on_startup())
+# === Основной запуск ===
+def run():
+    loop = asyncio.get_event_loop()
+    loop.create_task(on_startup())
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
+if __name__ == "__main__":
+    run()
