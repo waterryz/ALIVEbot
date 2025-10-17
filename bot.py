@@ -82,14 +82,20 @@ def index():
     return "ALIVE Bot работает 🚀"
 
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     try:
         update = types.Update(**request.json)
-        await dp.feed_update(bot, update)
+
+        # создаём новый event loop для каждого запроса
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(dp.feed_update(bot, update))
+
         return "ok", 200
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
         return "error", 500
+
 
 # ───────────────────────────────
 # Запуск Flask + aiogram
