@@ -1,34 +1,25 @@
-import os
-import logging
 import asyncio
+import logging
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from flask import Flask, request
+from parser import get_screenshot
 from users_db import init_db, save_credentials
 from dotenv import load_dotenv
-from parser import get_screenshot, JOURNAL_LINKS
-import requests
+import psycopg
 
 # ───────────────────────────────
-# НАСТРОЙКА
+# ЗАГРУЖАЕМ ПЕРЕМЕННЫЕ
 # ───────────────────────────────
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise Exception("❌ BOT_TOKEN не найден в Render Settings")
+DATABASE_URL = os.getenv("DATABASE_URL")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-app = Flask(__name__)
-
-# ───────────────────────────────
-# EVENT LOOP
-# ───────────────────────────────
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 # ───────────────────────────────
 # ИНИЦИАЛИЗАЦИЯ БАЗЫ
@@ -36,115 +27,83 @@ asyncio.set_event_loop(loop)
 try:
     init_db()
     logging.info("✅ Таблица users готова к использованию")
-except Exception as e:
+except psycopg.Error as e:
     logging.error(f"❌ Ошибка инициализации базы: {e}")
 
 # ───────────────────────────────
-# КНОПКА ПРИМЕРА
-# ───────────────────────────────
-example_button = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📖 Пример формата", callback_data="example")]
-])
-
-# ───────────────────────────────
-# ОБРАБОТЧИК /START
+# ОБРАБОТЧИК КОМАНДЫ /start
 # ───────────────────────────────
 @dp.message(CommandStart())
-async def start_handler(message: types.Message):
-    logging.info(f"➡️ Получен /start от {message.from_user.id}")
-    text = (
-        "Привет 👋 Это *ALIVE Bot!*\n\n"
-        "📘 Я помогу тебе получить скриншоты журналов с сайта колледжа.\n\n"
-        "🔐 Отправь свои данные в формате:\n"
-        "`ИИН ПАРОЛЬ`\n\n"
-        "После этого я начну загрузку твоих журналов 📊"
+async def start_command(message: types.Message):
+    await message.answer(
+        "Привет! 👋\n"
+        "Я помогу тебе получить скриншоты с сайта колледжа.\n\n"
+        "🔹 Отправь свой ИИН и пароль в формате:\n"
+        "`123456789012 пароль123`\n\n"
+        "🔹 Пример:\n"
+        "`060420091234 qwerty123`\n\n"
+        "_Все данные шифруются и не передаются третьим лицам._",
+        parse_mode="Markdown"
     )
-    await message.answer(text, parse_mode="Markdown", reply_markup=example_button)
 
 # ───────────────────────────────
-# ПРИМЕР ВВОДА
-# ───────────────────────────────
-@dp.callback_query()
-async def show_example(callback: types.CallbackQuery):
-    if callback.data == "example":
-        example_text = (
-            "🧩 *Пример правильного ввода:*\n"
-            "`090120555841 555841abc`\n\n"
-            "📌 Первое — ИИН, второе — пароль от сайта колледжа.\n"
-            "⚠️ Не пиши запятые, точки и лишние символы!"
-        )
-        await callback.message.answer(example_text, parse_mode="Markdown")
-        await callback.answer()
-
-# ───────────────────────────────
-# ОБРАБОТКА ДАННЫХ (ИИН + ПАРОЛЬ)
+# ОБРАБОТЧИК ВВОДА ИИН И ПАРОЛЯ
 # ───────────────────────────────
 @dp.message()
-async def credentials_handler(message: types.Message):
+async def handle_login(message: types.Message):
     try:
-        creds = message.text.strip().split()
-        if len(creds) != 2:
-            await message.answer(
-                "❗ Введи логин и пароль через пробел.\n\nПример: `090120555841 555841abc`",
-                parse_mode="Markdown"
-            )
+        text = message.text.strip()
+        if len(text.split()) != 2:
+            await message.answer("❌ Неверный формат. Отправь в формате: `ИИН пароль`", parse_mode="Markdown")
             return
 
-        login, password = creds
-        save_credentials(message.from_user.id, login, password)
-        await message.answer("✅ Данные сохранены! Загружаю журналы...")
+        iin, password = text.split()
 
-        os.makedirs("screenshots", exist_ok=True)
+        save_credentials(message.from_user.id, iin, password)
+        await message.answer("✅ Данные сохранены! Теперь выбери предмет:")
 
-        for subject in JOURNAL_LINKS.keys():
-            await message.answer(f"📘 Загружаю журнал: {subject}...")
-            result = await get_screenshot(login, password, subject)
-
-            if result["success"] and os.path.exists(result["path"]):
-                with open(result["path"], "rb") as photo:
-                    await message.answer_photo(photo, caption=f"✅ {subject}")
-            else:
-                await message.answer(f"❌ {subject}: {result['error']}")
-
-        await message.answer("✅ Все доступные журналы отправлены!")
+        keyboard = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="Python"), types.KeyboardButton(text="БД")],
+                [types.KeyboardButton(text="ИКТ"), types.KeyboardButton(text="Графика")],
+                [types.KeyboardButton(text="Физра"), types.KeyboardButton(text="Экономика")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("📚 Выбери предмет:", reply_markup=keyboard)
 
     except Exception as e:
-        logging.error(f"Ошибка при обработке сообщения: {e}")
-        await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
+        logging.error(f"Ошибка при обработке логина: {e}")
+        await message.answer("❌ Ошибка при сохранении данных. Попробуй снова.")
 
 # ───────────────────────────────
-# FLASK WEBHOOK
+# ПОЛУЧЕНИЕ СКРИНШОТА
 # ───────────────────────────────
-@app.route("/", methods=["GET"])
-def index():
-    return "ALIVE Bot работает 🚀"
-
-@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-def webhook():
+@dp.message(lambda msg: msg.text in ["Python", "БД", "ИКТ", "Графика", "Физра", "Экономика"])
+async def handle_subject(message: types.Message):
     try:
-        update = types.Update(**request.json)
-        # главное исправление
-        asyncio.run_coroutine_threadsafe(dp.feed_update(bot, update), loop)
-        return "ok", 200
+        user_id = message.from_user.id
+        subject = message.text
+        iin, password = await get_user_credentials(user_id)
+
+        if not iin or not password:
+            await message.answer("❌ Сначала отправь свой ИИН и пароль.")
+            return
+
+        await message.answer("🕐 Подожди немного, получаю скриншот...")
+
+        screenshot_path = get_screenshot(iin, password, subject)
+        if screenshot_path:
+            await message.answer_photo(types.FSInputFile(screenshot_path), caption=f"📄 {subject}")
+        else:
+            await message.answer("❌ Ошибка при получении скриншота. Проверь данные и попробуй снова.")
+
     except Exception as e:
-        logging.error(f"Ошибка в webhook: {e}")
-        return "error", 500
+        logging.error(f"Ошибка при получении скриншота: {e}")
+        await message.answer("⚠️ Не удалось получить журнал. Попробуй позже.")
 
 # ───────────────────────────────
-# УСТАНОВКА WEBHOOK ПРИ ЗАПУСКЕ
-# ───────────────────────────────
-WEBHOOK_URL = f"https://alivebot-9bjd.onrender.com/webhook/{BOT_TOKEN}"
-
-try:
-    set_webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
-    r = requests.get(set_webhook_url)
-    logging.info(f"🌐 Webhook обновлён: {r.text}")
-except Exception as e:
-    logging.error(f"❌ Не удалось установить webhook: {e}")
-
-# ───────────────────────────────
-# ЗАПУСК СЕРВЕРА
+# ЗАПУСК ПОЛЛИНГА
 # ───────────────────────────────
 if __name__ == "__main__":
-    logging.info("🚀 Flask сервер запущен и ожидает обновления Telegram...")
-    app.run(host="0.0.0.0", port=10000)
+    asyncio.run(dp.start_polling(bot))
