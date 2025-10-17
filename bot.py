@@ -1,204 +1,167 @@
 # -*- coding: utf-8 -*-
-import os
-import time
-import asyncio
+import os, time, asyncio, sqlite3
 from pathlib import Path
 from dotenv import load_dotenv
 from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.types import Update
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 load_dotenv()
 
-# --- Настройки из окружения ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN не задан")
+    raise Exception("BOT_TOKEN не задан")
 
-# Render предоставляет RENDER_EXTERNAL_URL. Если нет — поставь свой WEBHOOK_HOST, например https://myapp.onrender.com
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_HOST")
-if not WEBHOOK_HOST:
-    raise RuntimeError("WEBHOOK_HOST или RENDER_EXTERNAL_URL не заданы")
-
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 PORT = int(os.getenv("PORT", "10000"))
 
-SMART_LOGIN = os.getenv("SMART_LOGIN")
-SMART_PASSWORD = os.getenv("SMART_PASSWORD")
-if not (SMART_LOGIN and SMART_PASSWORD):
-    print("Warning: SMART_LOGIN/SMART_PASSWORD не заданы. /getscreens работать не будет пока их нет.")
+OUTDIR = Path("screens"); OUTDIR.mkdir(exist_ok=True)
 
-# Журналы (через запятую) или дефолтный набор
-JOURNAL_URLS = os.getenv("JOURNAL_URLS", "").strip()
-if JOURNAL_URLS:
-    JOURNAL_URLS = [u.strip() for u in JOURNAL_URLS.split(",") if u.strip()]
-else:
-    JOURNAL_URLS = [
-        "https://college.snation.kz/kz/tko/control/journals/873776",
-        "https://college.snation.kz/kz/tko/control/journals/873751",
-    ]
+# --- ЖУРНАЛЫ SmartNation (можно добавлять свои) ---
+JOURNALS = {
+    "Python": "https://college.snation.kz/kz/tko/control/journals/873776",
+    "Графика": "https://college.snation.kz/kz/tko/control/journals/873751",
+    "Физ-ра": "https://college.snation.kz/kz/tko/control/journals/873753",
+    "Базы данных": "https://college.snation.kz/kz/tko/control/journals/873763",
+    "ИКТ": "https://college.snation.kz/kz/tko/control/journals/873757",
+}
 
-OUTDIR = Path("screens")
-OUTDIR.mkdir(exist_ok=True)
+# --- SQLite база для логинов ---
+DB = "users.db"
+conn = sqlite3.connect(DB, check_same_thread=False)
+cur = conn.cursor()
+cur.execute("""CREATE TABLE IF NOT EXISTS users(
+    user_id INTEGER PRIMARY KEY,
+    login TEXT,
+    password TEXT
+)""")
+conn.commit()
 
-# --- Aiogram webhook setup ---
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+def save_user(uid, login, password):
+    cur.execute("REPLACE INTO users(user_id, login, password) VALUES (?, ?, ?)", (uid, login, password))
+    conn.commit()
+
+def get_user(uid):
+    cur.execute("SELECT login, password FROM users WHERE user_id=?", (uid,))
+    return cur.fetchone()
+
+# --- Telegram бот ---
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command(commands=["start"]))
-async def cmd_start(msg):
-    await msg.answer("Привет! Отправь /getscreens чтобы получить скрины журналов SmartNation.")
+@dp.message(Command("start"))
+async def start(m: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
+        [InlineKeyboardButton(text="📚 Показать журналы", callback_data="show_journals")]
+    ])
+    await m.answer("👋 Привет! Я бот SmartNation.\n\n"
+                   "• /login — ввести логин и пароль\n"
+                   "• /getscreens — получить скриншот журнала\n\n"
+                   "Или выбери действие:", reply_markup=kb)
 
-@dp.message(Command(commands=["getscreens"]))
-async def cmd_getscreens(msg):
-    if not (SMART_LOGIN and SMART_PASSWORD):
-        await msg.answer("Ошибка: SMART_LOGIN/SMART_PASSWORD не настроены в окружении.")
+# --- Авторизация ---
+@dp.message(Command("login"))
+async def login_cmd(m: types.Message):
+    await m.answer("Введи логин SmartNation:")
+    dp.message.register(get_login_step, lambda msg: msg.from_user.id == m.from_user.id)
+
+async def get_login_step(m: types.Message):
+    login = m.text.strip()
+    await m.answer("Теперь введи пароль:")
+    dp.message.register(lambda msg: save_login_pass(msg, login), lambda msg: msg.from_user.id == m.from_user.id)
+
+async def save_login_pass(m: types.Message, login):
+    password = m.text.strip()
+    save_user(m.from_user.id, login, password)
+    await m.answer("✅ Логин и пароль сохранены! Теперь используй /getscreens")
+
+# --- Выбор журнала ---
+@dp.message(Command("getscreens"))
+async def getscreens(m: types.Message):
+    creds = get_user(m.from_user.id)
+    if not creds:
+        await m.answer("⚠️ Сначала введи /login")
         return
-    await msg.answer("Логинюсь в SmartNation и снимаю скриншоты... Это может занять ~10-30 секунд.")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=title, callback_data=f"journal|{key}")] for key, title in enumerate(JOURNALS.keys())]
+    )
+    await m.answer("📘 Выбери журнал:", reply_markup=kb)
+
+# --- Callback: показать выбранный журнал ---
+@dp.callback_query(lambda c: c.data.startswith("journal|"))
+async def send_journal(c: types.CallbackQuery):
+    creds = get_user(c.from_user.id)
+    if not creds:
+        await c.message.answer("⚠️ Сначала введи /login")
+        return
+    login, password = creds
+    idx = int(c.data.split("|")[1])
+    name = list(JOURNALS.keys())[idx]
+    url = list(JOURNALS.values())[idx]
+
+    await c.message.answer(f"📄 Загружаю журнал *{name}*...", parse_mode="Markdown")
     try:
-        driver = create_logged_driver(headless=True)
+        driver = create_logged_driver(login, password)
+        path = screenshot_url(driver, url, name)
+        driver.quit()
+        with open(path, "rb") as f:
+            await bot.send_photo(c.from_user.id, f, caption=f"Журнал: {name}")
     except Exception as e:
-        await msg.answer(f"Не удалось запустить браузер: {e}")
-        return
+        await c.message.answer(f"❌ Ошибка: {e}")
 
-    sent = 0
-    try:
-        for idx, url in enumerate(JOURNAL_URLS, start=1):
-            try:
-                path = screenshot_url(driver, url, name_hint=f"journal_{idx}")
-                with open(path, "rb") as f:
-                    await bot.send_photo(chat_id=msg.chat.id, photo=f, caption=f"Журнал {idx}\n{url}")
-                sent += 1
-            except Exception as e:
-                await msg.answer(f"Ошибка при скриншоте {url}: {e}")
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+# --- Webhook / aiohttp ---
+async def handle(req: web.Request):
+    data = await req.json()
+    await dp.process_update(types.Update(**data))
+    return web.Response(status=200)
 
-    if sent:
-        await msg.answer("Готово ✅")
-    else:
-        await msg.answer("Не удалось сделать ни одного скриншота.")
-
-# --- webhook handler ---
-async def handle(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-    except Exception:
-        return web.Response(status=400, text="no json")
-    update = Update(**data)
-    await dp.process_update(update)
-    return web.Response(status=200, text="ok")
-
-async def on_startup(app: web.Application):
+async def on_start(app):
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
-    print("Webhook установлен:", WEBHOOK_URL)
+    print("✅ Webhook установлен:", WEBHOOK_URL)
 
-async def on_cleanup(app: web.Application):
+async def on_stop(app):
     await bot.delete_webhook()
     await bot.session.close()
 
 def main():
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle)
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
+    app.on_startup.append(on_start)
+    app.on_cleanup.append(on_stop)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
-# -------------------- Selenium helpers --------------------
-def create_logged_driver(headless=True):
-    """
-    Запускает Chromium + chromedriver. Возвращает selenium webdriver,
-    уже залогиненным в SmartNation (если удачно).
-    """
-    # Параметры браузера
-    chrome_options = Options()
-    if headless:
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1200")
-    chrome_options.add_argument("--lang=ru")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
-    # Если на системе есть chromium в нестандартном месте, можно указать BINARY_LOCATION через env
-    chrome_bin = os.getenv("CHROME_BIN")  # например /usr/bin/chromium
-    if chrome_bin:
-        chrome_options.binary_location = chrome_bin
-
-    # Устанавливаем chromedriver через webdriver_manager
-    driver_path = ChromeDriverManager().install()
-    service = Service(driver_path)
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.implicitly_wait(8)
-
-    # Логинимся
-    login_url = "https://college.snation.kz/kz/tko/login"
-    driver.get(login_url)
-    time.sleep(1.0)
-
-    # Пытливые варианты селекторов — если первый не найден, пробуем другой
-    try:
-        # Вариант 1: name=username / name=password
-        try:
-            u = driver.find_element(By.NAME, "username")
-            p = driver.find_element(By.NAME, "password")
-            btn = driver.find_element(By.XPATH, "//button[@type='submit' or contains(., 'Кіру') or contains(., 'Войти')]")
-        except Exception:
-            # Вариант 2: id или placeholder
-            u = driver.find_element(By.ID, "login")
-            p = driver.find_element(By.ID, "password")
-            btn = driver.find_element(By.XPATH, "//button[contains(.,'Кіру') or contains(.,'Войти') or @type='submit']")
-    except NoSuchElementException:
-        raise RuntimeError("Не удалось найти поля логина. Проверь селекторы на странице логина SmartNation.")
-
-    # Заполняем и отправляем
-    u.clear()
-    u.send_keys(SMART_LOGIN)
-    p.clear()
-    p.send_keys(SMART_PASSWORD)
-    try:
-        btn.click()
-    except Exception:
-        driver.execute_script("arguments[0].click();", btn)
-    # Ждём редирект/загрузку
-    time.sleep(2.5)
-
-    # Проверка успешного входа: попробуем найти кнопку выхода / профиль
-    # (если не нашли — всё равно возвращаем драйвер, может быть требуется 2FA)
+# --- Selenium ---
+def create_logged_driver(login, password):
+    opts = Options()
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1920,1200")
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+    driver.get("https://college.snation.kz/kz/tko/login")
+    time.sleep(1)
+    driver.find_element(By.NAME, "username").send_keys(login)
+    driver.find_element(By.NAME, "password").send_keys(password)
+    driver.find_element(By.XPATH, "//button[@type='submit']").click()
+    time.sleep(2)
     return driver
 
-def screenshot_url(driver, url: str, name_hint: str = "page"):
+def screenshot_url(driver, url, name):
     driver.get(url)
     time.sleep(1.2)
-    # Попытка получить полную высоту страницы и сделать полно-страничный скрин
-    try:
-        total_width = driver.execute_script("return document.documentElement.scrollWidth")
-        total_height = driver.execute_script("return document.documentElement.scrollHeight")
-        # Ограничим размеры, чтобы не выйти за пределы
-        w = min(total_width, 4096)
-        h = min(total_height, 20000)
-        driver.set_window_size(w, h)
-        time.sleep(0.5)
-    except Exception:
-        pass
-    fname = OUTDIR / f"{int(time.time())}_{name_hint}.png"
-    driver.save_screenshot(str(fname))
-    return fname
+    path = OUTDIR / f"{int(time.time())}_{name}.png"
+    driver.save_screenshot(str(path))
+    return path
 
-# -------------------- Run --------------------
 if __name__ == "__main__":
     main()
