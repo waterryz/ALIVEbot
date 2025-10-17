@@ -129,9 +129,6 @@ async def handle_message(message: types.Message):
 # ──────────────────────────────────────────────
 # Запуск
 async def main():
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook/{BOT_TOKEN}"
-    await bot.set_webhook(webhook_url)
-    logging.info(f"🌐 Webhook установлен: {webhook_url}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
