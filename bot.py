@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -127,13 +128,14 @@ def journals_kb():
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
-        "👋 Привет! Я бот SmartNation.\n"
+        "👋 Привет! Я бот ALIVE helper.\n"
         "Введи логин и пароль, чтобы получать скриншоты журналов.\n\n"
         "Команды:\n"
         "• /login — авторизация\n"
         "• /account — просмотр учётки\n"
         "• /journals — открыть журналы\n"
-        "• /logout — удалить данные",
+        "• /logout — удалить данные"
+        "Создал: Cычёв Александр ПО2408",
         reply_markup=menu_kb()
     )
 
@@ -196,9 +198,11 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # ✅ путь к chromium в Render
+    # путь к chromium в Render
     chrome_options.binary_location = "/usr/bin/chromium-browser"
-    driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
 
     driver.get("https://college.snation.kz/kz/tko/login")
 
