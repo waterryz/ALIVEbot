@@ -1,5 +1,5 @@
-from playwright.async_api import async_playwright
-import asyncio
+from playwright.sync_api import sync_playwright
+import time
 import os
 
 LOGIN_URL = "https://college.snation.kz/kz/tko/login"
@@ -12,40 +12,31 @@ JOURNAL_LINKS = {
     "Экономика": "https://college.snation.kz/kz/tko/control/journals/873760",
 }
 
-async def get_screenshot(iin, password, subject):
+def get_screenshot(iin, password, subject):
     os.makedirs("screenshots", exist_ok=True)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(LOGIN_URL)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        page.fill("input[name='iin']", iin)
+        page.fill("input[name='password']", password)
+        page.click("button[type='submit']")
+        time.sleep(3)
 
-        try:
-            # Вход на сайт
-            await page.goto(LOGIN_URL, timeout=20000)
-            await page.fill("input[name='iin']", iin)
-            await page.fill("input[name='password']", password)
-            await page.click("button[type='submit']")
-            await asyncio.sleep(3)
+        if "login" in page.url:
+            browser.close()
+            return None
 
-            # Проверка успешного входа
-            if "login" in page.url.lower():
-                await browser.close()
-                return {"success": False, "error": "Неверный логин или пароль"}
+        link = JOURNAL_LINKS.get(subject)
+        if not link:
+            browser.close()
+            return None
 
-            journal_url = JOURNAL_LINKS.get(subject)
-            if not journal_url:
-                await browser.close()
-                return {"success": False, "error": f"Предмет {subject} не найден"}
+        page.goto(link)
+        time.sleep(5)
 
-            await page.goto(journal_url, timeout=20000)
-            await asyncio.sleep(5)
-
-            screenshot_path = f"screenshots/{subject}.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
-
-            await browser.close()
-            return {"success": True, "path": screenshot_path}
-
-        except Exception as e:
-            await browser.close()
-            return {"success": False, "error": str(e)}
+        path = f"screenshots/{subject}.png"
+        page.screenshot(path=path, full_page=True)
+        browser.close()
+        return path
