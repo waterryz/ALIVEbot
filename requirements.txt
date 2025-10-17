@@ -2,4 +2,4 @@ aiogram==3.13.1
 playwright==1.48.0
 Flask[async]==3.0.3
 gunicorn==23.0.0
-psycopg2-binary==2.9.9
+psycopg[binary]==3.1.18
