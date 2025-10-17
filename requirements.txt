@@ -3,3 +3,5 @@ playwright==1.48.0
 Flask[async]==3.0.3
 gunicorn==23.0.0
 psycopg[binary]==3.2.10
+cryptography==43.0.1
+
