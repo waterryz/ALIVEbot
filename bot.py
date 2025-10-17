@@ -8,6 +8,7 @@ from flask import Flask, request
 from users_db import init_db, save_credentials
 from dotenv import load_dotenv
 from parser import get_screenshot, JOURNAL_LINKS
+import requests
 
 # ───────────────────────────────
 # НАСТРОЙКА
@@ -24,7 +25,7 @@ dp = Dispatcher()
 app = Flask(__name__)
 
 # ───────────────────────────────
-# ОДИН ГЛОБАЛЬНЫЙ EVENT LOOP
+# EVENT LOOP
 # ───────────────────────────────
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
@@ -36,7 +37,7 @@ try:
     init_db()
     logging.info("✅ Таблица users готова к использованию")
 except Exception as e:
-    logging.error(f"❌ Ошибка инициализации базы данных: {e}")
+    logging.error(f"❌ Ошибка инициализации базы: {e}")
 
 # ───────────────────────────────
 # КНОПКА ПРИМЕРА
@@ -50,6 +51,7 @@ example_button = InlineKeyboardMarkup(inline_keyboard=[
 # ───────────────────────────────
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
+    logging.info(f"➡️ Получен /start от {message.from_user.id}")
     text = (
         "Привет 👋 Это *ALIVE Bot!*\n\n"
         "📘 Я помогу тебе получить скриншоты журналов с сайта колледжа.\n\n"
@@ -110,23 +112,6 @@ async def credentials_handler(message: types.Message):
         logging.error(f"Ошибка при обработке сообщения: {e}")
         await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
 
-
-# ───────────────────────────────
-# УСТАНОВКА WEBHOOK ПРИ ЗАПУСКЕ
-# ───────────────────────────────
-import requests
-
-WEBHOOK_URL = f"https://alivebot-9bjd.onrender.com/webhook/{BOT_TOKEN}"
-
-
-try:
-    set_webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
-    r = requests.get(set_webhook_url)
-    logging.info(f"🌐 Webhook обновлён: {r.text}")
-except Exception as e:
-    logging.error(f"❌ Не удалось установить webhook: {e}")
-
-
 # ───────────────────────────────
 # FLASK WEBHOOK
 # ───────────────────────────────
@@ -138,11 +123,24 @@ def index():
 def webhook():
     try:
         update = types.Update(**request.json)
-        loop.create_task(dp.feed_update(bot, update))
+        # главное исправление
+        asyncio.run_coroutine_threadsafe(dp.feed_update(bot, update), loop)
         return "ok", 200
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
         return "error", 500
+
+# ───────────────────────────────
+# УСТАНОВКА WEBHOOK ПРИ ЗАПУСКЕ
+# ───────────────────────────────
+WEBHOOK_URL = f"https://alivebot-9bjd.onrender.com/webhook/{BOT_TOKEN}"
+
+try:
+    set_webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
+    r = requests.get(set_webhook_url)
+    logging.info(f"🌐 Webhook обновлён: {r.text}")
+except Exception as e:
+    logging.error(f"❌ Не удалось установить webhook: {e}")
 
 # ───────────────────────────────
 # ЗАПУСК СЕРВЕРА
