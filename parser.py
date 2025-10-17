@@ -2,6 +2,7 @@ from playwright.sync_api import sync_playwright
 import time
 import os
 
+# Ссылки
 LOGIN_URL = "https://college.snation.kz/kz/tko/login"
 JOURNAL_LINKS = {
     "Python": "https://college.snation.kz/kz/tko/control/journals/873776",
@@ -12,52 +13,62 @@ JOURNAL_LINKS = {
     "Экономика": "https://college.snation.kz/kz/tko/control/journals/873760",
 }
 
+
 def get_screenshot(iin, password, subject):
+    """
+    Авторизация на сайте колледжа и получение скриншота журнала по предмету.
+    Возвращает путь к скриншоту или текст ошибки ("login_failed", "wrong_subject", None)
+    """
+
     try:
         with sync_playwright() as p:
+            print("🌐 Запуск браузера...")
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
 
-            print("🌐 Переход на сайт...")
+            print("🔗 Открываю страницу логина...")
             page.goto(LOGIN_URL, timeout=60000)
 
-            # Проверим наличие полей
-            if not page.locator("input[name='iin']").is_visible():
-                print("⚠️ Поле для ИИН не найдено.")
-                browser.close()
-                return "login_failed"
+            # Ждём появление формы входа
+            page.wait_for_selector("input[placeholder='ЖСН']", timeout=15000)
 
-            # Заполняем логин и пароль
-            page.fill("input[name='iin']", iin)
-            page.fill("input[name='password']", password)
-            page.click("button[type='submit']")
+            print("✏️ Ввожу данные пользователя...")
+            page.fill("input[placeholder='ЖСН']", iin)
+            page.fill("input[placeholder^='Құпия']", password)
 
-            print("🔐 Введены данные, ожидаем вход...")
+            # Кнопка входа
+            page.click("button:has-text('Жүйеге кіру')")
+
+            print("🔐 Ожидание перехода после входа...")
             page.wait_for_timeout(5000)
 
-            # Проверяем, удалось ли войти
-            if "login" in page.url or page.url.endswith("/login"):
-                print("❌ Неверный логин или пароль.")
+            # Проверка успешного входа
+            if "login" in page.url or "password" in page.url:
+                print("❌ Ошибка: неверный логин или пароль.")
                 browser.close()
                 return "login_failed"
 
-            # Проверяем предмет
+            # Проверка предмета
             journal_url = JOURNAL_LINKS.get(subject)
             if not journal_url:
-                print("❌ Неверный предмет:", subject)
+                print("❌ Ошибка: предмет не найден.")
                 browser.close()
                 return "wrong_subject"
 
-            print("📖 Открываю журнал:", subject)
+            print(f"📚 Открываю журнал по предмету: {subject}")
             page.goto(journal_url, timeout=60000)
-            page.wait_for_timeout(4000)
 
-            # Создаём папку
+            # Ждём загрузку страницы
+            page.wait_for_timeout(5000)
+
+            # Создание папки для скринов
             os.makedirs("screenshots", exist_ok=True)
             screenshot_path = f"screenshots/{subject}.png"
-            page.screenshot(path=screenshot_path, full_page=True)
 
-            print("✅ Скриншот сохранен:", screenshot_path)
+            # Сохраняем скриншот
+            page.screenshot(path=screenshot_path, full_page=True)
+            print(f"✅ Скриншот сохранён: {screenshot_path}")
+
             browser.close()
             return screenshot_path
 
