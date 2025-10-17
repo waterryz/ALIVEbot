@@ -7,9 +7,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask, request
 from users_db import init_db, save_credentials
 from dotenv import load_dotenv
+from parser import get_screenshot, JOURNAL_LINKS
 
 # ───────────────────────────────
-# НАСТРОЙКА ОКРУЖЕНИЯ
+# НАСТРОЙКА
 # ───────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +39,7 @@ example_button = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ───────────────────────────────
-# ОБРАБОТЧИК /start
+# /START
 # ───────────────────────────────
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -52,14 +53,14 @@ async def start_handler(message: types.Message):
     await message.answer(text, parse_mode="Markdown", reply_markup=example_button)
 
 # ───────────────────────────────
-# КОЛБЭК ПРИ НАЖАТИИ НА КНОПКУ "ПРИМЕР"
+# КОЛБЭК ПРИ НАЖАТИИ НА КНОПКУ
 # ───────────────────────────────
 @dp.callback_query()
 async def show_example(callback: types.CallbackQuery):
     if callback.data == "example":
         example_text = (
             "🧩 *Пример правильного ввода:*\n"
-            "`123456888999 888999abc`\n\n"
+            "`090120555841 555841abc`\n\n"
             "📌 Первое — ИИН, второе — пароль от сайта колледжа.\n"
             "⚠️ Не пиши запятые, точки и лишние символы!"
         )
@@ -67,33 +68,35 @@ async def show_example(callback: types.CallbackQuery):
         await callback.answer()
 
 # ───────────────────────────────
-# ОБРАБОТКА ДАННЫХ (ИИН + ПАРОЛЬ)
+# ОСНОВНАЯ ЛОГИКА (ИИН + ПАРОЛЬ)
 # ───────────────────────────────
 @dp.message()
 async def credentials_handler(message: types.Message):
     try:
         creds = message.text.strip().split()
         if len(creds) != 2:
-            await message.answer("❗ Введи логин и пароль через пробел.\n\nПример: `090120555841 555841abc`", parse_mode="Markdown")
+            await message.answer(
+                "❗ Введи логин и пароль через пробел.\n\nПример: `090120555841 555841abc`",
+                parse_mode="Markdown"
+            )
             return
 
         login, password = creds
         save_credentials(message.from_user.id, login, password)
         await message.answer("✅ Данные сохранены! Загружаю журналы...")
 
-        from parser import JOURNAL_LINKS, get_screenshot
-        import os
-
         os.makedirs("screenshots", exist_ok=True)
 
+        # Обработка всех предметов
         for subject in JOURNAL_LINKS.keys():
             await message.answer(f"📘 Загружаю журнал: {subject}...")
-            screenshot_path = get_screenshot(login, password, subject)
-            if screenshot_path and os.path.exists(screenshot_path):
-                with open(screenshot_path, "rb") as photo:
+            result = await get_screenshot(login, password, subject)
+
+            if result["success"] and os.path.exists(result["path"]):
+                with open(result["path"], "rb") as photo:
                     await message.answer_photo(photo, caption=f"✅ {subject}")
             else:
-                await message.answer(f"❌ Не удалось загрузить {subject}")
+                await message.answer(f"❌ {subject}: {result['error']}")
 
         await message.answer("✅ Все доступные журналы отправлены!")
 
@@ -102,7 +105,7 @@ async def credentials_handler(message: types.Message):
         await message.answer("⚠️ Произошла ошибка. Попробуй позже.")
 
 # ───────────────────────────────
-# FLASK WEBHOOK ENDPOINTS
+# FLASK WEBHOOK
 # ───────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
@@ -112,14 +115,14 @@ def index():
 def webhook():
     try:
         update = types.Update(**request.json)
-        asyncio.run(dp.feed_update(bot, update))  # ✅ стабильный запуск
+        asyncio.run(dp.feed_update(bot, update))
         return "ok", 200
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
         return "error", 500
 
 # ───────────────────────────────
-# ЗАПУСК FLASK СЕРВЕРА
+# ЗАПУСК
 # ───────────────────────────────
 if __name__ == "__main__":
     logging.info("🚀 Flask сервер запущен и ожидает обновления Telegram...")
