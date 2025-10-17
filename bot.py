@@ -1,6 +1,7 @@
 import os
 import logging
-import asyncpg
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -12,12 +13,12 @@ from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 
 # ──────────────────────────────────────────────
-# Логи
+# Настройка логов
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
-# ENV
+# Загрузка .env
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
@@ -25,17 +26,57 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 
 if not TOKEN:
-    raise Exception("❌ BOT_TOKEN не найден")
+    raise Exception("❌ BOT_TOKEN не найден в Render Environment")
 if not DATABASE_URL:
-    raise Exception("❌ DATABASE_URL не найден (Neon connection string)")
+    raise Exception("❌ DATABASE_URL не найден (строка из Neon.tech)")
 
 # ──────────────────────────────────────────────
-# Aiogram
+# Aiogram 3
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# ──────────────────────────────────────────────
+# PostgreSQL helpers
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, sslmode="require", cursor_factory=RealDictCursor)
+
+def init_db():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    login TEXT,
+                    password TEXT
+                );
+            """)
+            conn.commit()
+
+def save_user(user_id, login, password):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (user_id, login, password)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id)
+                DO UPDATE SET login = EXCLUDED.login, password = EXCLUDED.password;
+            """, (user_id, login, password))
+            conn.commit()
+
+def get_user(user_id):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT login, password FROM users WHERE user_id = %s;", (user_id,))
+            return cur.fetchone()
+
+def delete_user(user_id):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM users WHERE user_id = %s;", (user_id,))
+            conn.commit()
 
 # ──────────────────────────────────────────────
 # FSM для авторизации
@@ -44,42 +85,7 @@ class AuthForm(StatesGroup):
     password = State()
 
 # ──────────────────────────────────────────────
-# Подключение к Neon PostgreSQL
-async def create_db_pool():
-    pool = await asyncpg.create_pool(DATABASE_URL, ssl="require")
-    async with pool.acquire() as conn:
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            login TEXT,
-            password TEXT
-        );
-        """)
-    return pool
-
-pool: asyncpg.Pool = None
-
-# ──────────────────────────────────────────────
-# Работа с БД
-async def save_user(user_id: int, login: str, password: str):
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO users (user_id, login, password)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id)
-            DO UPDATE SET login=$2, password=$3;
-        """, user_id, login, password)
-
-async def get_user(user_id: int):
-    async with pool.acquire() as conn:
-        return await conn.fetchrow("SELECT login, password FROM users WHERE user_id=$1;", user_id)
-
-async def delete_user(user_id: int):
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM users WHERE user_id=$1;", user_id)
-
-# ──────────────────────────────────────────────
-# Интерфейс
+# Меню
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -90,10 +96,10 @@ def menu_kb():
 # ──────────────────────────────────────────────
 # Команды
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def start(message: types.Message):
     await message.answer(
         "👋 Привет! Я бот SmartNation.\n"
-        "Здесь ты можешь сохранить логин и пароль от SmartNation, чтобы потом бот мог делать скриншоты журналов.\n\n"
+        "Сохрани логин и пароль, чтобы потом получать скрины журналов.\n\n"
         "Команды:\n"
         "• /login — ввести логин и пароль\n"
         "• /account — посмотреть сохранённые данные\n"
@@ -107,39 +113,40 @@ async def login_cmd(message: types.Message, state: FSMContext):
     await message.answer("✍️ Введи логин SmartNation:")
 
 @dp.message(AuthForm.login)
-async def step_login(message: types.Message, state: FSMContext):
+async def login_step(message: types.Message, state: FSMContext):
     await state.update_data(login=message.text.strip())
     await state.set_state(AuthForm.password)
     await message.answer("🔒 Теперь введи пароль:")
 
 @dp.message(AuthForm.password)
-async def step_password(message: types.Message, state: FSMContext):
+async def password_step(message: types.Message, state: FSMContext):
     data = await state.get_data()
     login = data.get("login")
     password = message.text.strip()
-    await save_user(message.from_user.id, login, password)
+    save_user(message.from_user.id, login, password)
     await state.clear()
-    await message.answer("✅ Логин и пароль сохранены!")
+    await message.answer("✅ Данные сохранены!")
 
 @dp.message(Command("account"))
 async def account_cmd(message: types.Message):
-    row = await get_user(message.from_user.id)
+    row = get_user(message.from_user.id)
     if not row:
-        await message.answer("❌ Данные не найдены. Нажми /login.")
+        await message.answer("❌ Данные не найдены. Используй /login.")
     else:
         masked = "•" * max(8, len(row['password']) // 2)
         await message.answer(
             f"👤 <b>Аккаунт SmartNation</b>\n"
-            f"Логин: <code>{row['login']}</code>\nПароль: <code>{masked}</code>"
+            f"Логин: <code>{row['login']}</code>\n"
+            f"Пароль: <code>{masked}</code>"
         )
 
 @dp.message(Command("logout"))
 async def logout_cmd(message: types.Message):
-    await delete_user(message.from_user.id)
-    await message.answer("🚪 Учётка удалена.")
+    delete_user(message.from_user.id)
+    await message.answer("🚪 Данные удалены.")
 
 # ──────────────────────────────────────────────
-# Inline callbacks
+# Callback кнопки
 @dp.callback_query(F.data == "login")
 async def cb_login(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("✍️ Введи логин SmartNation:")
@@ -148,25 +155,26 @@ async def cb_login(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "account")
 async def cb_account(callback: types.CallbackQuery):
-    row = await get_user(callback.from_user.id)
+    row = get_user(callback.from_user.id)
     if not row:
         await callback.message.answer("❌ Нет данных. Используй /login.")
     else:
         masked = "•" * max(8, len(row['password']) // 2)
         await callback.message.answer(
             f"👤 <b>Аккаунт SmartNation</b>\n"
-            f"Логин: <code>{row['login']}</code>\nПароль: <code>{masked}</code>"
+            f"Логин: <code>{row['login']}</code>\n"
+            f"Пароль: <code>{masked}</code>"
         )
     await callback.answer()
 
 @dp.callback_query(F.data == "logout")
 async def cb_logout(callback: types.CallbackQuery):
-    await delete_user(callback.from_user.id)
+    delete_user(callback.from_user.id)
     await callback.message.answer("🚪 Данные удалены.")
     await callback.answer()
 
 # ──────────────────────────────────────────────
-# Webhook и сервер
+# Webhook / сервер
 async def handle(request: web.Request):
     try:
         data = await request.json()
@@ -181,17 +189,15 @@ async def root(request):
     return web.Response(text="Bot is running ✅")
 
 async def on_start(app: web.Application):
-    global pool
-    pool = await create_db_pool()
+    init_db()
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
-    logger.info("✅ Webhook установлен и подключен к БД.")
+    logger.info("✅ Webhook установлен и база готова!")
 
 async def on_stop(app: web.Application):
     await bot.delete_webhook()
     await bot.session.close()
-    await pool.close()
-    logger.info("🛑 Всё закрыто.")
+    logger.info("🛑 Webhook удалён, бот остановлен")
 
 def main():
     app = web.Application()
