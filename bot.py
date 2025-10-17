@@ -116,7 +116,8 @@ async def credentials_handler(message: types.Message):
 # ───────────────────────────────
 import requests
 
-WEBHOOK_URL = f"https://alivebot-7pa2.onrender.com/webhook/{BOT_TOKEN}"
+WEBHOOK_URL = f"https://alivebot-9bjd.onrender.com/webhook/{BOT_TOKEN}"
+
 
 try:
     set_webhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
