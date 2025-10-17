@@ -8,11 +8,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from cryptography.fernet import Fernet
 from parser import get_screenshot
 
-# ЛОГИ
+# Логирование
 logging.basicConfig(level=logging.INFO)
 
 # ──────────────────────────────────────────────
-# НАСТРОЙКИ
+# Настройки окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
@@ -21,12 +21,11 @@ if not BOT_TOKEN or not DATABASE_URL:
     raise Exception("❌ BOT_TOKEN или DATABASE_URL не заданы!")
 
 fernet = Fernet(ENCRYPTION_KEY)
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ──────────────────────────────────────────────
-# ИНИЦИАЛИЗАЦИЯ БД
+# Инициализация базы данных
 async def init_db():
     async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
         async with conn.cursor() as cur:
@@ -43,15 +42,15 @@ async def init_db():
 asyncio.run(init_db())
 
 # ──────────────────────────────────────────────
-# ХЭНДЛЕРЫ
+# Хэндлеры команд
 
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пример IIN и пароля", callback_data="example")],
+        [InlineKeyboardButton(text="📘 Пример IIN и пароля", callback_data="example")],
     ])
     await message.answer(
-        "👋 Привет! Отправь свой ИИН и пароль через пробел (пример: `123456789012 1234`)",
+        "👋 Привет! Отправь свой ИИН и пароль через пробел\n(пример: `123456789012 1234`)",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -61,10 +60,21 @@ async def example_callback(callback: types.CallbackQuery):
     await callback.message.answer("📘 Пример: `123456789012 1234` (IIN и пароль через пробел)", parse_mode="Markdown")
     await callback.answer()
 
+# ──────────────────────────────────────────────
+# Основная логика (ИИН/пароль → предмет)
 @dp.message()
-async def save_credentials(message: types.Message):
-    try:
-        parts = message.text.strip().split()
+async def handle_message(message: types.Message):
+    text = message.text.strip()
+    parts = text.split()
+
+    # Проверяем, есть ли пользователь в базе
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT login, password FROM users WHERE user_id = %s", (message.from_user.id,))
+            row = await cur.fetchone()
+
+    # Если пользователя нет — сохраняем ИИН и пароль
+    if not row:
         if len(parts) != 2:
             await message.answer("❌ Формат неверный. Введи так: `ИИН пароль`", parse_mode="Markdown")
             return
@@ -86,39 +96,30 @@ async def save_credentials(message: types.Message):
 
         await message.answer("✅ Данные сохранены! Теперь выбери предмет:")
         await message.answer(
-            "📚 Доступные журналы:\nPython, БД, ИКТ, Графика, Физра, Экономика\n\nНапиши предмет, чтобы получить скриншот."
+            "📚 Доступные журналы:\nPython, БД, ИКТ, Графика, Физра, Экономика\n\n✏️ Напиши предмет, чтобы получить скриншот."
         )
-
-    except Exception as e:
-        logging.error(f"Ошибка при сохранении: {e}")
-        await message.answer("⚠️ Произошла ошибка при сохранении данных.")
-
-@dp.message()
-async def handle_subject(message: types.Message):
-    subject = message.text.strip()
-
-    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT login, password FROM users WHERE user_id = %s", (message.from_user.id,))
-            row = await cur.fetchone()
-
-    if not row:
-        await message.answer("❌ Сначала отправь ИИН и пароль!")
         return
 
+    # Если пользователь уже есть — обрабатываем как предмет
+    subject = text.strip()
     login = fernet.decrypt(row[0].encode()).decode()
     password = fernet.decrypt(row[1].encode()).decode()
 
-    path = get_screenshot(login, password, subject)
-    if not path:
-        await message.answer("⚠️ Не удалось получить скриншот. Проверь данные или предмет.")
-        return
+    await message.answer("⌛ Получаю скриншот, подожди немного...")
 
-    await message.answer_photo(photo=open(path, "rb"), caption=f"📸 Журнал по предмету {subject}")
+    try:
+        path = get_screenshot(login, password, subject)
+        if not path:
+            await message.answer("⚠️ Не удалось получить скриншот. Проверь данные или предмет.")
+            return
+
+        await message.answer_photo(photo=open(path, "rb"), caption=f"📸 Журнал по предмету {subject}")
+    except Exception as e:
+        logging.error(f"Ошибка при получении скриншота: {e}")
+        await message.answer("⚠️ Произошла ошибка при загрузке журнала.")
 
 # ──────────────────────────────────────────────
-# ЗАПУСК
-
+# Запуск
 async def main():
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook/{BOT_TOKEN}"
     await bot.set_webhook(webhook_url)
