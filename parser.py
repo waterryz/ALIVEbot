@@ -1,8 +1,6 @@
-from playwright.sync_api import sync_playwright
-import time
+from playwright.async_api import async_playwright
+import asyncio
 import os
-os.makedirs("screenshots", exist_ok=True)
-
 
 LOGIN_URL = "https://college.snation.kz/kz/tko/login"
 JOURNAL_LINKS = {
@@ -14,56 +12,40 @@ JOURNAL_LINKS = {
     "Экономика": "https://college.snation.kz/kz/tko/control/journals/873760",
 }
 
+async def get_screenshot(iin, password, subject):
+    os.makedirs("screenshots", exist_ok=True)
 
-def get_screenshot(iin, password, subject):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
 
-        page.goto(LOGIN_URL)
-        page.fill("input[name='iin']", iin)
-        page.fill("input[name='password']", password)
-        page.click("button[type='submit']")
+        try:
+            # Вход на сайт
+            await page.goto(LOGIN_URL, timeout=20000)
+            await page.fill("input[name='iin']", iin)
+            await page.fill("input[name='password']", password)
+            await page.click("button[type='submit']")
+            await asyncio.sleep(3)
 
-        time.sleep(3)
+            # Проверка успешного входа
+            if "login" in page.url.lower():
+                await browser.close()
+                return {"success": False, "error": "Неверный логин или пароль"}
 
-        if "login" in page.url:
-            browser.close()
-            return None
+            journal_url = JOURNAL_LINKS.get(subject)
+            if not journal_url:
+                await browser.close()
+                return {"success": False, "error": f"Предмет {subject} не найден"}
 
-        journal_url = JOURNAL_LINKS.get(subject)
-        if not journal_url:
-            browser.close()
-            return None
+            await page.goto(journal_url, timeout=20000)
+            await asyncio.sleep(5)
 
-        page.goto(journal_url)
-        time.sleep(5)
+            screenshot_path = f"screenshots/{subject}.png"
+            await page.screenshot(path=screenshot_path, full_page=True)
 
-        screenshot_path = f"screenshots/{subject}.png"
-        page.screenshot(path=screenshot_path, full_page=True)
+            await browser.close()
+            return {"success": True, "path": screenshot_path}
 
-        browser.close()
-        return screenshot_path
-
-import asyncio
-
-# ───────────────────────────────
-# Асинхронная обёртка для бота
-# ───────────────────────────────
-async def parse_site(login: str, password: str):
-    """
-    Универсальная функция для Telegram-бота.
-    Делает скриншоты всех журналов и возвращает ссылки.
-    """
-    subjects = list(JOURNAL_LINKS.keys())
-    results = []
-
-    for subject in subjects:
-        screenshot_path = get_screenshot(login, password, subject)
-        if screenshot_path:
-            results.append(f"✅ {subject}: {screenshot_path}")
-        else:
-            results.append(f"❌ {subject}: ошибка входа или загрузки")
-
-    return "\n".join(results)
-
+        except Exception as e:
+            await browser.close()
+            return {"success": False, "error": str(e)}
