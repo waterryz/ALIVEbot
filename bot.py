@@ -26,18 +26,17 @@ from html import escape
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
 PORT = int(os.getenv("PORT", 10000))
 
+# База Neon
 PG_USER = "neondb_owner"
 PG_PASSWORD = "npg_wh0zI9NHUVBe"
 PG_HOST = "ep-lively-river-agz7orw8-pooler.c-2.eu-central-1.aws.neon.tech"
 PG_DB = "neondb"
 
-# ──────────────────────────────
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -106,7 +105,6 @@ class AuthForm(StatesGroup):
     login = State()
     password = State()
 
-# ──────────────────────────────
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -173,49 +171,6 @@ async def cb_logout(callback: types.CallbackQuery):
     await callback.answer()
 
 # ──────────────────────────────
-@dp.message(Command("login"))
-async def login_cmd(message: types.Message, state: FSMContext):
-    await state.set_state(AuthForm.login)
-    await message.answer("✍️ Введи логин (ЖСН):")
-
-@dp.message(AuthForm.login)
-async def login_step(message: types.Message, state: FSMContext):
-    await state.update_data(login=message.text.strip())
-    await state.set_state(AuthForm.password)
-    await message.answer("🔒 Теперь введи пароль (Құпия сөз):")
-
-@dp.message(AuthForm.password)
-async def password_step(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    login = data.get("login")
-    password = message.text.strip()
-    save_user(message.from_user.id, login, password)
-    await state.clear()
-    await message.answer("✅ Данные сохранены! Теперь напиши /journals")
-
-@dp.message(Command("account"))
-async def account_cmd(message: types.Message):
-    row = get_user(message.from_user.id)
-    if not row:
-        await message.answer("❌ Нет данных. Используй /login.")
-    else:
-        masked = "•" * max(8, len(row['password']) // 2)
-        await message.answer(
-            f"👤 <b>SmartNation аккаунт</b>\n"
-            f"Логин: <code>{row['login']}</code>\n"
-            f"Пароль: <code>{masked}</code>"
-        )
-
-@dp.message(Command("logout"))
-async def logout_cmd(message: types.Message):
-    delete_user(message.from_user.id)
-    await message.answer("🚪 Данные удалены.")
-
-@dp.message(Command("journals"))
-async def journals_cmd(message: types.Message):
-    await message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
-
-# ──────────────────────────────
 JOURNALS = {
     "python": "https://college.snation.kz/kz/tko/control/journals/873776",
     "graphics": "https://college.snation.kz/kz/tko/control/journals/873751",
@@ -232,7 +187,7 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # Render-friendly Chrome запуск через Chromium
+    # Render-friendly Chromium
     chrome_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
     service = Service(chrome_path)
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -313,7 +268,7 @@ async def on_start(app: web.Application):
     logger.info("✅ Webhook установлен и база готова!")
 
 async def on_stop(app: web.Application):
-    logger.info("🛑 Завершение процесса (Render control)")
+    logger.info("🛑 Завершение процесса")
 
 def main():
     app = web.Application()
