@@ -3,6 +3,7 @@ import logging
 import time
 import pg8000
 import asyncio
+import chromedriver_autoinstaller
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -14,24 +15,21 @@ from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.utils import ChromeType
 from html import escape
 
 # ──────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ──────────────────────────────
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
 PORT = int(os.getenv("PORT", 10000))
 
-# База Neon
 PG_USER = "neondb_owner"
 PG_PASSWORD = "npg_wh0zI9NHUVBe"
 PG_HOST = "ep-lively-river-agz7orw8-pooler.c-2.eu-central-1.aws.neon.tech"
@@ -105,6 +103,7 @@ class AuthForm(StatesGroup):
     login = State()
     password = State()
 
+# ──────────────────────────────
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -181,16 +180,16 @@ JOURNALS = {
 
 # ──────────────────────────────
 def make_screenshot(login, password, url, path):
+    # Устанавливаем chromium автоматически
+    chromedriver_autoinstaller.install()
+
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # Render-friendly Chromium
-    chrome_path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
-    service = Service(chrome_path)
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)
 
     driver.get("https://college.snation.kz/kz/tko/login")
 
@@ -264,18 +263,14 @@ async def root(request):
 async def on_start(app: web.Application):
     init_db()
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL)
+    await bot.set_webhook(f"{WEBHOOK_URL}")
     logger.info("✅ Webhook установлен и база готова!")
-
-async def on_stop(app: web.Application):
-    logger.info("🛑 Завершение процесса")
 
 def main():
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle)
     app.router.add_get("/", root)
     app.on_startup.append(on_start)
-    app.on_cleanup.append(on_stop)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
