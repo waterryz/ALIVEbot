@@ -1,5 +1,8 @@
 from playwright.sync_api import sync_playwright
 import time
+import os
+os.makedirs("screenshots", exist_ok=True)
+
 
 LOGIN_URL = "https://college.snation.kz/kz/tko/login"
 JOURNAL_LINKS = {
