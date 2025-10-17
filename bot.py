@@ -2,6 +2,7 @@ import os
 import logging
 import time
 import pg8000
+import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -14,15 +15,15 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ──────────────────────────────
-# ЛОГИ
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────
-# ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
@@ -36,11 +37,11 @@ PG_DB = "neondb"
 # ──────────────────────────────
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
+
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # ──────────────────────────────
-# БАЗА ДАННЫХ
 def get_conn():
     return pg8000.connect(
         user=PG_USER,
@@ -98,13 +99,11 @@ def delete_user(user_id):
     conn.close()
 
 # ──────────────────────────────
-# FSM (логин и пароль)
 class AuthForm(StatesGroup):
     login = State()
     password = State()
 
 # ──────────────────────────────
-# КЛАВИАТУРЫ
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -124,7 +123,6 @@ def journals_kb():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ──────────────────────────────
-# КОМАНДЫ
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
@@ -141,13 +139,13 @@ async def start(message: types.Message):
 @dp.message(Command("login"))
 async def login_cmd(message: types.Message, state: FSMContext):
     await state.set_state(AuthForm.login)
-    await message.answer("✍️ Введи логин SmartNation:")
+    await message.answer("✍️ Введи логин (ЖСН):")
 
 @dp.message(AuthForm.login)
 async def login_step(message: types.Message, state: FSMContext):
     await state.update_data(login=message.text.strip())
     await state.set_state(AuthForm.password)
-    await message.answer("🔒 Теперь введи пароль:")
+    await message.answer("🔒 Теперь введи пароль (Құпия сөз):")
 
 @dp.message(AuthForm.password)
 async def password_step(message: types.Message, state: FSMContext):
@@ -181,7 +179,6 @@ async def journals_cmd(message: types.Message):
     await message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
 
 # ──────────────────────────────
-# ССЫЛКИ НА ЖУРНАЛЫ
 JOURNALS = {
     "python": "https://college.snation.kz/kz/tko/control/journals/873776",
     "graphics": "https://college.snation.kz/kz/tko/control/journals/873751",
@@ -191,32 +188,47 @@ JOURNALS = {
 }
 
 # ──────────────────────────────
-# ФУНКЦИЯ СКРИНШОТА
 def make_screenshot(login, password, url, path):
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
 
     driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
     driver.get("https://college.snation.kz/kz/tko/login")
 
-    # логин
-    driver.find_element(By.NAME, "login").send_keys(login)
-    driver.find_element(By.NAME, "password").send_keys(password)
-    driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
-    time.sleep(4)
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='ЖСН']"))
+        )
 
-    # переход в журнал
-    driver.get(url)
-    time.sleep(5)
-    driver.save_screenshot(path)
-    driver.quit()
+        driver.find_element(By.CSS_SELECTOR, "input[aria-label='ЖСН']").send_keys(login)
+        driver.find_element(By.CSS_SELECTOR, "input[aria-label='Құпия сөз']").send_keys(password)
+        driver.find_element(By.XPATH, "//button[contains(., 'Жүйеге кіру')]").click()
+
+        # ждём перехода в систему
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "sn-page"))
+        )
+
+        driver.get(url)
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.TAG_NAME, "table"))
+        )
+
+        time.sleep(2)
+        driver.save_screenshot(path)
+    except Exception as e:
+        print(f"Ошибка входа или загрузки: {e}")
+        driver.save_screenshot("error.png")
+    finally:
+        driver.quit()
 
 # ──────────────────────────────
-# ВЫБОР ЖУРНАЛА
 @dp.callback_query(F.data.startswith("journal_"))
 async def cb_journal(callback: types.CallbackQuery):
+    await callback.answer("⏳ Загрузка...")
     subj = callback.data.replace("journal_", "")
     row = get_user(callback.from_user.id)
     if not row:
@@ -226,18 +238,20 @@ async def cb_journal(callback: types.CallbackQuery):
     login = row["login"]
     password = row["password"]
     url = JOURNALS[subj]
-
-    await callback.message.answer("⏳ Загружаю журнал, подожди немного...")
-
     path = f"{callback.from_user.id}_{subj}.png"
-    make_screenshot(login, password, url, path)
 
-    await bot.send_photo(callback.from_user.id, open(path, "rb"))
-    os.remove(path)
-    await callback.answer()
+    await callback.message.answer("⏳ Захожу в SmartNation...")
+
+    try:
+        await asyncio.to_thread(make_screenshot, login, password, url, path)
+        await bot.send_photo(callback.from_user.id, open(path, "rb"))
+    except Exception as e:
+        await callback.message.answer(f"⚠️ Ошибка при загрузке журнала: {e}")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
 
 # ──────────────────────────────
-# ВЕБ-СЕРВЕР
 async def handle(request: web.Request):
     try:
         data = await request.json()
