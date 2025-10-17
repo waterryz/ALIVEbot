@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import pg8000
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
@@ -10,34 +11,36 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 
-# ──────────────────────────────────────────────
-# Настройка логов
+# ──────────────────────────────
+# ЛОГИ
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────
-# Загрузка .env
+# ──────────────────────────────
+# ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
 PORT = int(os.getenv("PORT", 10000))
 
-# Параметры БД Neon
 PG_USER = "neondb_owner"
 PG_PASSWORD = "npg_wh0zI9NHUVBe"
 PG_HOST = "ep-lively-river-agz7orw8-pooler.c-2.eu-central-1.aws.neon.tech"
 PG_DB = "neondb"
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
-
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
-# ──────────────────────────────────────────────
-# Подключение к базе через pg8000
+# ──────────────────────────────
+# БАЗА ДАННЫХ
 def get_conn():
     return pg8000.connect(
         user=PG_USER,
@@ -94,30 +97,44 @@ def delete_user(user_id):
     cur.close()
     conn.close()
 
-# ──────────────────────────────────────────────
-# FSM
+# ──────────────────────────────
+# FSM (логин и пароль)
 class AuthForm(StatesGroup):
     login = State()
     password = State()
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────
+# КЛАВИАТУРЫ
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
+        [InlineKeyboardButton(text="📘 Журналы", callback_data="journals")],
         [InlineKeyboardButton(text="👤 Аккаунт", callback_data="account")],
         [InlineKeyboardButton(text="🚪 Выйти", callback_data="logout")]
     ])
 
-# ──────────────────────────────────────────────
+def journals_kb():
+    buttons = [
+        [InlineKeyboardButton(text="💻 Python", callback_data="journal_python")],
+        [InlineKeyboardButton(text="🎨 Графика", callback_data="journal_graphics")],
+        [InlineKeyboardButton(text="🗄️ БД", callback_data="journal_bd")],
+        [InlineKeyboardButton(text="🧠 ИКТ", callback_data="journal_ikt")],
+        [InlineKeyboardButton(text="🏃 Физ-ра", callback_data="journal_pe")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ──────────────────────────────
+# КОМАНДЫ
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
         "👋 Привет! Я бот SmartNation.\n"
-        "Сохрани логин и пароль, чтобы потом получать скрины журналов.\n\n"
+        "Введи логин и пароль, чтобы получать скриншоты журналов.\n\n"
         "Команды:\n"
-        "• /login — ввести логин и пароль\n"
-        "• /account — посмотреть сохранённые данные\n"
-        "• /logout — удалить учётку",
+        "• /login — авторизация\n"
+        "• /account — просмотр учётки\n"
+        "• /journals — открыть журналы\n"
+        "• /logout — удалить данные",
         reply_markup=menu_kb()
     )
 
@@ -139,17 +156,17 @@ async def password_step(message: types.Message, state: FSMContext):
     password = message.text.strip()
     save_user(message.from_user.id, login, password)
     await state.clear()
-    await message.answer("✅ Данные сохранены!")
+    await message.answer("✅ Данные сохранены! Теперь напиши /journals")
 
 @dp.message(Command("account"))
 async def account_cmd(message: types.Message):
     row = get_user(message.from_user.id)
     if not row:
-        await message.answer("❌ Данные не найдены. Используй /login.")
+        await message.answer("❌ Нет данных. Используй /login.")
     else:
         masked = "•" * max(8, len(row['password']) // 2)
         await message.answer(
-            f"👤 <b>Аккаунт SmartNation</b>\n"
+            f"👤 <b>SmartNation аккаунт</b>\n"
             f"Логин: <code>{row['login']}</code>\n"
             f"Пароль: <code>{masked}</code>"
         )
@@ -159,34 +176,68 @@ async def logout_cmd(message: types.Message):
     delete_user(message.from_user.id)
     await message.answer("🚪 Данные удалены.")
 
-# ──────────────────────────────────────────────
-@dp.callback_query(F.data == "login")
-async def cb_login(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("✍️ Введи логин SmartNation:")
-    await state.set_state(AuthForm.login)
-    await callback.answer()
+@dp.message(Command("journals"))
+async def journals_cmd(message: types.Message):
+    await message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
 
-@dp.callback_query(F.data == "account")
-async def cb_account(callback: types.CallbackQuery):
+# ──────────────────────────────
+# ССЫЛКИ НА ЖУРНАЛЫ
+JOURNALS = {
+    "python": "https://college.snation.kz/kz/tko/control/journals/873776",
+    "graphics": "https://college.snation.kz/kz/tko/control/journals/873751",
+    "bd": "https://college.snation.kz/kz/tko/control/journals/873763",
+    "ikt": "https://college.snation.kz/kz/tko/control/journals/873757",
+    "pe": "https://college.snation.kz/kz/tko/control/journals/873753"
+}
+
+# ──────────────────────────────
+# ФУНКЦИЯ СКРИНШОТА
+def make_screenshot(login, password, url, path):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+
+    driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+    driver.get("https://college.snation.kz/kz/tko/login")
+
+    # логин
+    driver.find_element(By.NAME, "login").send_keys(login)
+    driver.find_element(By.NAME, "password").send_keys(password)
+    driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+    time.sleep(4)
+
+    # переход в журнал
+    driver.get(url)
+    time.sleep(5)
+    driver.save_screenshot(path)
+    driver.quit()
+
+# ──────────────────────────────
+# ВЫБОР ЖУРНАЛА
+@dp.callback_query(F.data.startswith("journal_"))
+async def cb_journal(callback: types.CallbackQuery):
+    subj = callback.data.replace("journal_", "")
     row = get_user(callback.from_user.id)
     if not row:
-        await callback.message.answer("❌ Нет данных. Используй /login.")
-    else:
-        masked = "•" * max(8, len(row['password']) // 2)
-        await callback.message.answer(
-            f"👤 <b>Аккаунт SmartNation</b>\n"
-            f"Логин: <code>{row['login']}</code>\n"
-            f"Пароль: <code>{masked}</code>"
-        )
+        await callback.message.answer("❌ Сначала введи логин и пароль: /login")
+        return
+
+    login = row["login"]
+    password = row["password"]
+    url = JOURNALS[subj]
+
+    await callback.message.answer("⏳ Загружаю журнал, подожди немного...")
+
+    path = f"{callback.from_user.id}_{subj}.png"
+    make_screenshot(login, password, url, path)
+
+    await bot.send_photo(callback.from_user.id, open(path, "rb"))
+    os.remove(path)
     await callback.answer()
 
-@dp.callback_query(F.data == "logout")
-async def cb_logout(callback: types.CallbackQuery):
-    delete_user(callback.from_user.id)
-    await callback.message.answer("🚪 Данные удалены.")
-    await callback.answer()
-
-# ──────────────────────────────────────────────
+# ──────────────────────────────
+# ВЕБ-СЕРВЕР
 async def handle(request: web.Request):
     try:
         data = await request.json()
@@ -208,7 +259,6 @@ async def on_start(app: web.Application):
 
 async def on_stop(app: web.Application):
     logger.info("🛑 Завершение процесса (Render control)")
-
 
 def main():
     app = web.Application()
