@@ -195,7 +195,10 @@ def make_screenshot(login, password, url, path):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+    # Новый способ запуска Chrome
+    service = webdriver.ChromeService(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
     driver.get("https://college.snation.kz/kz/tko/login")
 
     try:
@@ -207,7 +210,7 @@ def make_screenshot(login, password, url, path):
         driver.find_element(By.CSS_SELECTOR, "input[aria-label='Құпия сөз']").send_keys(password)
         driver.find_element(By.XPATH, "//button[contains(., 'Жүйеге кіру')]").click()
 
-        # ждём перехода в систему
+        # ждём появления основной страницы
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CLASS_NAME, "sn-page"))
         )
@@ -219,11 +222,13 @@ def make_screenshot(login, password, url, path):
 
         time.sleep(2)
         driver.save_screenshot(path)
+
     except Exception as e:
         print(f"Ошибка входа или загрузки: {e}")
         driver.save_screenshot("error.png")
     finally:
         driver.quit()
+
 
 # ──────────────────────────────
 @dp.callback_query(F.data.startswith("journal_"))
