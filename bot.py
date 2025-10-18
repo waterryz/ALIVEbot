@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import aiohttp
-import zipfile
 import pg8000
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
@@ -134,48 +133,9 @@ JOURNALS = {
 }
 
 # ──────────────────────────────
-CHROME_PATH = "./chrome/chrome-linux/chrome"
-CHROME_ZIP = "https://files.catbox.moe/5xq5se.zip"  # ✅ стабильное зеркало Chromium
-
-async def ensure_chromium():
-    """Скачивает portable Chromium при первом запуске."""
-    if os.path.exists(CHROME_PATH):
-        return
-    os.makedirs("chrome", exist_ok=True)
-    zip_path = "chrome/chrome.zip"
-
-    logger.info("⬇️ Скачиваю Chromium portable...")
-    async with aiohttp.ClientSession() as session:
-        async with session.get(CHROME_ZIP) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"Ошибка загрузки Chromium ({resp.status}): {text[:200]}")
-            with open(zip_path, "wb") as f:
-                while True:
-                    chunk = await resp.content.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-
-    logger.info("📦 Распаковываю Chromium...")
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall("chrome")
-    os.remove(zip_path)
-    logger.info("✅ Chromium готов!")
-
 async def make_screenshot(login, password, url, path):
-    await ensure_chromium()
-    chromium_executable = os.path.abspath(CHROME_PATH)
-
-    if not os.path.exists(chromium_executable):
-        raise FileNotFoundError(f"❌ Chromium не найден по пути: {chromium_executable}")
-
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            executable_path=chromium_executable,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
-        )
+        browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
 
         await page.goto("https://college.snation.kz/kz/tko/login")
@@ -185,8 +145,7 @@ async def make_screenshot(login, password, url, path):
         await page.wait_for_load_state("networkidle")
 
         await page.goto(url)
-        await page.wait_for_timeout(3000)
-
+        await page.wait_for_timeout(2000)
         await page.screenshot(path=path, full_page=True)
         await browser.close()
 
@@ -234,7 +193,6 @@ async def on_start(app: web.Application):
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
     logger.info("✅ Webhook установлен и база готова!")
-    await ensure_chromium()
 
 def main():
     app = web.Application()
