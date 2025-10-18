@@ -1,10 +1,9 @@
 import os
 import logging
 import asyncio
-import pg8000
-import subprocess
 import aiohttp
 import zipfile
+import pg8000
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -136,7 +135,7 @@ JOURNALS = {
 
 # ──────────────────────────────
 CHROME_PATH = "./chrome/chrome-linux/chrome"
-CHROME_ZIP = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1140/chrome-linux.zip"
+CHROME_ZIP = "https://github.com/macchrome/macstable/releases/download/v114.0.5735.90-r1153629/Linux_Chromium_114.0.5735.90.zip"
 
 async def ensure_chromium():
     """Скачивает portable Chromium при первом запуске."""
@@ -148,6 +147,9 @@ async def ensure_chromium():
     logger.info("⬇️ Скачиваю Chromium portable...")
     async with aiohttp.ClientSession() as session:
         async with session.get(CHROME_ZIP) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise Exception(f"Ошибка загрузки Chromium ({resp.status}): {text[:200]}")
             with open(zip_path, "wb") as f:
                 while True:
                     chunk = await resp.content.read(1024 * 1024)
@@ -155,6 +157,7 @@ async def ensure_chromium():
                         break
                     f.write(chunk)
 
+    logger.info("📦 Распаковываю Chromium...")
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
         zip_ref.extractall("chrome")
     os.remove(zip_path)
@@ -162,12 +165,21 @@ async def ensure_chromium():
 
 async def make_screenshot(login, password, url, path):
     await ensure_chromium()
-    from playwright.async_api import async_playwright
+    chromium_executable = os.path.abspath(CHROME_PATH)
+
+    if not os.path.exists(chromium_executable):
+        raise FileNotFoundError(f"❌ Chromium не найден по пути: {chromium_executable}")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            executable_path=CHROME_PATH
+            executable_path=chromium_executable,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer"
+            ]
         )
         page = await browser.new_page()
 
