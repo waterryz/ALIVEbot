@@ -231,16 +231,25 @@ async def on_startup(app):
     await init_db()
     await bot.delete_webhook()
     await bot.set_webhook(f"{BASE_URL}/webhook/{BOT_TOKEN}", drop_pending_updates=True)
-    logging.info(f"✅ Вебхук установлен и база готова!")
+    logging.info("✅ Вебхук установлен и база готова!")
 
 async def on_shutdown(app):
     await bot.delete_webhook()
     logging.info("🛑 Вебхук удалён.")
 
+# создаём aiohttp приложение
 app = web.Application()
-app.router.add_post(f"/webhook/{BOT_TOKEN}", dp._webhook_handler)
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
 
+# новый хендлер вебхука (без приватных методов)
+async def handle_webhook(request):
+    update = await request.json()
+    await dp.feed_update(bot, types.Update(**update))
+    return web.Response(text="ok")
+
+app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
+
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
+
