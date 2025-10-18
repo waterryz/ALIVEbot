@@ -7,7 +7,10 @@ from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 # ───────────────────────────────
 load_dotenv()
@@ -63,42 +66,25 @@ async def start(message: types.Message):
     )
 
 # ───────────────────────────────
-# Логин — два шага: ИИН и пароль
-user_temp = {}
-
+# Логин
 @dp.message(Command("login"))
 async def cmd_login(message: types.Message):
-    await message.answer("🔑 Введи ИИН:")
-    user_temp[message.from_user.id] = {"step": "iin"}
+    await message.answer("🔑 Введи логин и пароль (через пробел):")
 
 @dp.message()
-async def handle_login_steps(message: types.Message):
-    uid = message.from_user.id
-    if uid in user_temp:
-        step = user_temp[uid].get("step")
-
-        # шаг 1 — ввод ИИН
-        if step == "iin":
-            user_temp[uid]["login"] = message.text.strip()
-            user_temp[uid]["step"] = "password"
-            await message.answer("🔒 Теперь введи пароль:")
-
-        # шаг 2 — ввод пароля
-        elif step == "password":
-            password = message.text.strip()
-            login = user_temp[uid]["login"]
-
-            async with db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO users (user_id, login, password)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (user_id)
-                    DO UPDATE SET login=$2, password=$3
-                """, uid, login, password)
-
-            del user_temp[uid]
-            await message.answer("✅ Логин и пароль сохранены!")
+async def handle_login(message: types.Message):
+    parts = message.text.strip().split()
+    if len(parts) != 2:
         return
+    login, password = parts
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO users (user_id, login, password)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id)
+            DO UPDATE SET login=$2, password=$3
+        """, message.from_user.id, login, password)
+    await message.answer("✅ Логин и пароль сохранены!")
 
 # ───────────────────────────────
 # Просмотр учётки
@@ -120,7 +106,7 @@ async def logout(message: types.Message):
     await message.answer("📤 Данные удалены!")
 
 # ───────────────────────────────
-# Получение скрина журнала
+# Скрин журналов
 @dp.message(Command("journals"))
 async def journals(message: types.Message):
     async with db_pool.acquire() as conn:
@@ -133,28 +119,35 @@ async def journals(message: types.Message):
     screenshot_path = f"screenshot_{message.from_user.id}.png"
 
     try:
-        await make_screenshot(user["login"], user["password"], screenshot_path)
+        await asyncio.to_thread(make_screenshot, user["login"], user["password"], screenshot_path)
         await message.answer_photo(photo=open(screenshot_path, "rb"), caption="📸 Готово!")
         os.remove(screenshot_path)
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка: {e}")
+        await message.answer(f"⚠️ Ошибка при загрузке журнала: {e}")
 
 # ───────────────────────────────
-# Playwright логин и скрин
-async def make_screenshot(login, password, path):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(args=["--no-sandbox"], headless=True)
-        page = await browser.new_page()
-        try:
-            await page.goto("https://college.snation.kz/kz/tko/login", timeout=60000)
-            await page.fill("input[name='LoginForm[username]']", login)
-            await page.fill("input[name='LoginForm[password]']", password)
-            await page.click("button[type='submit']")
-            await page.wait_for_load_state("networkidle", timeout=30000)
-            await page.goto("https://college.snation.kz/kz/tko/control/journals", timeout=60000)
-            await page.screenshot(path=path, full_page=True)
-        finally:
-            await browser.close()
+# Selenium логин и скрин
+def make_screenshot(login, password, path):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    try:
+        driver.get("https://college.snation.kz/kz/tko/login")
+        driver.find_element("name", "LoginForm[username]").send_keys(login)
+        driver.find_element("name", "LoginForm[password]").send_keys(password)
+        driver.find_element("xpath", "//button[@type='submit']").click()
+        asyncio.sleep(2)
+        driver.get("https://college.snation.kz/kz/tko/control/journals")
+        asyncio.sleep(2)
+        driver.save_screenshot(path)
+    finally:
+        driver.quit()
 
 # ───────────────────────────────
 # Webhook сервер
