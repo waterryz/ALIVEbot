@@ -3,3 +3,4 @@ aiohttp==3.10.5
 python-dotenv==1.0.1
 pg8000==1.31.2
 playwright==1.48.0
+asyncpg==0.29.0
