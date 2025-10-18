@@ -172,22 +172,29 @@ async def journals(message: types.Message):
         await message.answer(f"⚠️ Ошибка при загрузке журнала: {e}")
 
 # ==========================
-# ВЕБ-СЕРВЕР
+# ВЕБ-СЕРВЕР (Aiogram 3.13 совместимый)
 # ==========================
 async def on_startup(app):
     await init_db()
     webhook_url = f"{BASE_URL}/webhook/{BOT_TOKEN}"
     await bot.set_webhook(webhook_url)
-    logging.info("✅ Вебхук установлен")
+    logging.info(f"✅ Вебхук установлен: {webhook_url}")
 
 async def on_shutdown(app):
     await bot.delete_webhook()
     logging.info("🛑 Вебхук удалён")
 
+async def handle_webhook(request):
+    data = await request.json()
+    update = types.Update(**data)
+    await dp.feed_update(bot, update)
+    return web.Response(text="ok")
+
 app = web.Application()
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
-app.router.add_post(f"/webhook/{BOT_TOKEN}", dp.startup_webhook)
+
+app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
 app.router.add_get("/", lambda _: web.Response(text="ALIVE helper is running ✅"))
 
 if __name__ == "__main__":
