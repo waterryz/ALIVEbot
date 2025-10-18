@@ -150,6 +150,51 @@ async def make_screenshot(login, password, url, path):
         await browser.close()
 
 # ──────────────────────────────
+# Хендлеры команд
+@dp.message(F.text == "/login")
+async def login_cmd(message: types.Message):
+    await message.answer("🔐 Введи логин SmartNation (ЖСН):")
+    dp.login_stage = "login"
+    dp.temp_data = {message.from_user.id: {}}
+
+@dp.message(F.text.regexp(r"^\d{11,}$"))
+async def handle_login_input(message: types.Message):
+    if getattr(dp, "login_stage", "") == "login":
+        dp.temp_data[message.from_user.id]["login"] = message.text
+        dp.login_stage = "password"
+        await message.answer("🔑 Теперь введи пароль:")
+    elif getattr(dp, "login_stage", "") == "password":
+        data = dp.temp_data.get(message.from_user.id, {})
+        data["password"] = message.text
+        save_user(message.from_user.id, data["login"], data["password"])
+        dp.login_stage = None
+        await message.answer("✅ Данные сохранены! Теперь напиши /journals")
+
+@dp.message(F.text == "/account")
+async def account_cmd(message: types.Message):
+    row = get_user(message.from_user.id)
+    if not row:
+        await message.answer("❌ Нет данных. Используй /login")
+        return
+    await message.answer(
+        f"<b>SmartNation аккаунт</b>\n"
+        f"Логин: <code>{row['login']}</code>\nПароль: <code>{'*' * len(row['password'])}</code>"
+    )
+
+@dp.message(F.text == "/journals")
+async def journals_cmd(message: types.Message):
+    row = get_user(message.from_user.id)
+    if not row:
+        await message.answer("❌ Сначала авторизуйся через /login")
+        return
+    await message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
+
+@dp.message(F.text == "/logout")
+async def logout_cmd(message: types.Message):
+    delete_user(message.from_user.id)
+    await message.answer("👋 Данные удалены. Чтобы войти снова — /login")
+
+# ──────────────────────────────
 @dp.callback_query(F.data.startswith("journal_"))
 async def cb_journal(callback: types.CallbackQuery):
     subj = callback.data.replace("journal_", "")
