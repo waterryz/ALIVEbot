@@ -1,75 +1,83 @@
 import os
-import asyncio
 import logging
 import asyncpg
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart, Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from playwright.async_api import async_playwright
+
+# ---------------------- ENV / BASE ----------------------
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-BASE_URL = os.getenv("BASE_URL")
-PORT = int(os.getenv("PORT", 10000))
+BOT_TOKEN   = os.getenv("BOT_TOKEN")
+DATABASE_URL= os.getenv("DATABASE_URL")
+BASE_URL    = os.getenv("BASE_URL")  # публичный URL Railway
+PORT        = int(os.getenv("PORT", 10000))
 
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+bot = Bot(BOT_TOKEN)
+dp  = Dispatcher()
 
-# ==========================
-# КНОПКИ
-# ==========================
-def menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
-        [InlineKeyboardButton(text="📚 Журналы", callback_data="journals")],
-        [InlineKeyboardButton(text="👤 Аккаунт", callback_data="account")],
-        [InlineKeyboardButton(text="📩 Выйти", callback_data="logout")]
-    ])
-
-# ==========================
-# БАЗА
-# ==========================
+# ---------------------- DB ----------------------
 async def init_db():
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id BIGINT PRIMARY KEY,
-        login TEXT,
-        password TEXT
-    )
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            login   TEXT,
+            password TEXT
+        );
     """)
     await conn.close()
 
-async def save_user(user_id, login, password):
+async def save_user(user_id: int, login: str, password: str):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("""
-    INSERT INTO users (user_id, login, password)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (user_id) DO UPDATE SET login = EXCLUDED.login, password = EXCLUDED.password
+        INSERT INTO users (user_id, login, password)
+        VALUES ($1,$2,$3)
+        ON CONFLICT (user_id)
+        DO UPDATE SET login = EXCLUDED.login, password = EXCLUDED.password;
     """, user_id, login, password)
     await conn.close()
 
-async def get_user(user_id):
+async def get_user(user_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
-    user = await conn.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
+    row = await conn.fetchrow("SELECT login, password FROM users WHERE user_id=$1", user_id)
     await conn.close()
-    return user
+    return row
 
-async def delete_user(user_id):
+async def delete_user(user_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("DELETE FROM users WHERE user_id=$1", user_id)
     await conn.close()
 
-# ==========================
-# СТАРТ
-# ==========================
+# ---------------------- UI ----------------------
+def menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔐 Войти",    callback_data="cb_login")],
+        [InlineKeyboardButton(text="📚 Журналы",  callback_data="cb_journals")],
+        [InlineKeyboardButton(text="👤 Аккаунт",  callback_data="cb_account")],
+        [InlineKeyboardButton(text="📩 Выйти",    callback_data="cb_logout")],
+    ])
+
+def journals_kb() -> InlineKeyboardMarkup:
+    # при необходимости добавишь другие журналы/урлы
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💻 Python", callback_data="jrnl|https://college.snation.kz/kz/tko/control/journals/873776")],
+    ])
+
+# ---------------------- FSM ----------------------
+class LoginFSM(StatesGroup):
+    waiting_login   = State()  # ИИН
+    waiting_password= State()  # Пароль
+
+# ---------------------- START ----------------------
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
@@ -84,107 +92,186 @@ async def start(message: types.Message):
         reply_markup=menu_kb()
     )
 
-# ==========================
-# ЛОГИН
-# ==========================
+# ---------------------- LOGIN (команда) ----------------------
 @dp.message(Command("login"))
-async def ask_login(message: types.Message):
+async def cmd_login(message: types.Message, state: FSMContext):
+    await state.set_state(LoginFSM.waiting_login)
     await message.answer("🔑 Введи ИИН:")
-    dp.login_step = True
-    dp.password_step = False
 
-@dp.message()
-async def handle_input(message: types.Message):
-    user_id = message.from_user.id
+@dp.message(LoginFSM.waiting_login)
+async def login_step_login(message: types.Message, state: FSMContext):
+    await state.update_data(login=message.text.strip())
+    await state.set_state(LoginFSM.waiting_password)
+    await message.answer("🔒 Теперь введи пароль:")
 
-    if getattr(dp, "login_step", False):
-        dp.temp_login = message.text.strip()
-        dp.login_step = False
-        dp.password_step = True
-        await message.answer("🔒 Теперь введи пароль:")
-        return
+@dp.message(LoginFSM.waiting_password)
+async def login_step_password(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    login = data.get("login", "").strip()
+    password = message.text.strip()
+    await save_user(message.from_user.id, login, password)
+    await state.clear()
+    await message.answer("✅ Логин и пароль сохранены!", reply_markup=menu_kb())
 
-    if getattr(dp, "password_step", False):
-        dp.temp_password = message.text.strip()
-        dp.password_step = False
-        await save_user(user_id, dp.temp_login, dp.temp_password)
-        await message.answer("✅ Логин и пароль сохранены!", reply_markup=menu_kb())
+# ---------------------- LOGIN (кнопка) ----------------------
+@dp.callback_query(F.data == "cb_login")
+async def cb_login(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("🔑 Введи ИИН:")
+    await state.set_state(LoginFSM.waiting_login)
+    await call.answer()
 
-# ==========================
-# АККАУНТ
-# ==========================
+# ---------------------- ACCOUNT ----------------------
 @dp.message(Command("account"))
-async def account_info(message: types.Message):
+async def cmd_account(message: types.Message):
     user = await get_user(message.from_user.id)
     if not user:
-        await message.answer("⚠️ Ты ещё не вошёл! Используй /login.")
+        await message.answer("⚠️ Ты ещё не вошёл. Нажми «🔐 Войти» или команда /login.")
+        return
+    masked = "•" * max(0, len(user["password"]) - 2)
+    pwd_view = (user["password"][:2] + masked) if user["password"] else "—"
+    await message.answer(
+        f"👤 SmartNation аккаунт:\nЛогин: <code>{user['login']}</code>\nПароль: <code>{pwd_view}</code>",
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data == "cb_account")
+async def cb_account(call: types.CallbackQuery):
+    user = await get_user(call.from_user.id)
+    if not user:
+        await call.message.answer("⚠️ Ты ещё не вошёл. Нажми «🔐 Войти» или команда /login.")
     else:
-        masked = user["password"][:2] + "•" * (len(user["password"]) - 2)
-        await message.answer(f"👤 SmartNation аккаунт:\nЛогин: `{user['login']}`\nПароль: `{masked}`", parse_mode="Markdown")
+        masked = "•" * max(0, len(user["password"]) - 2)
+        pwd_view = (user["password"][:2] + masked) if user["password"] else "—"
+        await call.message.answer(
+            f"👤 SmartNation аккаунт:\nЛогин: <code>{user['login']}</code>\nПароль: <code>{pwd_view}</code>",
+            parse_mode="HTML"
+        )
+    await call.answer()
 
-# ==========================
-# УДАЛЕНИЕ ДАННЫХ
-# ==========================
+# ---------------------- LOGOUT ----------------------
 @dp.message(Command("logout"))
-async def logout(message: types.Message):
+async def cmd_logout(message: types.Message):
     await delete_user(message.from_user.id)
-    await message.answer("🗑️ Данные удалены!", reply_markup=menu_kb())
+    await message.answer("🗑️ Данные удалены.", reply_markup=menu_kb())
 
-# ==========================
-# ЗАГРУЗКА ЖУРНАЛА
-# ==========================
+@dp.callback_query(F.data == "cb_logout")
+async def cb_logout(call: types.CallbackQuery):
+    await delete_user(call.from_user.id)
+    await call.message.answer("🗑️ Данные удалены.", reply_markup=menu_kb())
+    await call.answer()
+
+# ---------------------- JOURNALS ----------------------
 @dp.message(Command("journals"))
-async def journals(message: types.Message):
+async def cmd_journals(message: types.Message):
     user = await get_user(message.from_user.id)
     if not user:
-        await message.answer("⚠️ Сначала войди через /login.")
+        await message.answer("⚠️ Сначала войди: /login или кнопка «🔐 Войти».")
+        return
+    await message.answer("📚 Выбери журнал:", reply_markup=journals_kb())
+
+@dp.callback_query(F.data == "cb_journals")
+async def cb_journals(call: types.CallbackQuery):
+    user = await get_user(call.from_user.id)
+    if not user:
+        await call.message.answer("⚠️ Сначала войди: /login или кнопка «🔐 Войти».")
+    else:
+        await call.message.answer("📚 Выбери журнал:", reply_markup=journals_kb())
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("jrnl|"))
+async def cb_open_journal(call: types.CallbackQuery):
+    _, url = call.data.split("|", 1)
+    user = await get_user(call.from_user.id)
+    if not user:
+        await call.message.answer("⚠️ Сначала войди: /login.")
+        await call.answer()
         return
 
-    await message.answer("⏳ Загружаю журнал, подожди немного...")
-
+    await call.message.answer("⏳ Захожу в SmartNation и загружаю журнал...")
     try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-
-        driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
-        driver.get("https://college.snation.kz/kz/tko/login")
-
-        driver.find_element("id", "loginform-username").send_keys(user["login"])
-        driver.find_element("id", "loginform-password").send_keys(user["password"])
-        driver.find_element("name", "login-button").click()
-
-        await asyncio.sleep(5)
-        driver.get("https://college.snation.kz/kz/tko/control/journals/873776")
-        await asyncio.sleep(5)
-
-        screenshot_path = f"screenshot_{message.from_user.id}.png"
-        driver.save_screenshot(screenshot_path)
-        driver.quit()
-
-        with open(screenshot_path, "rb") as photo:
-            await message.answer_photo(photo, caption="📄 Вот твой журнал!")
-        os.remove(screenshot_path)
-
+        photo_path = await make_screenshot_with_playwright(
+            login=user["login"], password=user["password"], journal_url=url,
+            user_id=call.from_user.id
+        )
+        with open(photo_path, "rb") as ph:
+            await call.message.answer_photo(ph, caption="📄 Готово!")
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка при загрузке журнала: {e}")
+        await call.message.answer(f"⚠️ Ошибка при загрузке журнала:\n<code>{e}</code>", parse_mode="HTML")
+        logging.exception("Journal error")
+    finally:
+        try:
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+        except Exception:
+            pass
+    await call.answer()
 
-# ==========================
-# ВЕБ-СЕРВЕР (Aiogram 3.13 совместимый)
-# ==========================
-async def on_startup(app):
+# ---------------------- PLAYWRIGHT SCRAPER ----------------------
+LOGIN_URL = "https://college.snation.kz/kz/tko/login"
+
+async def make_screenshot_with_playwright(login: str, password: str, journal_url: str, user_id: int) -> str:
+    """
+    Логинится на SmartNation и делает скрин указанного журнала.
+    Требует: playwright install chromium --with-deps
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox", "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage", "--disable-gpu",
+            ],
+        )
+        ctx = await browser.new_context(viewport={"width":1280,"height":900})
+        page = await ctx.new_page()
+
+        # Login page
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+        await page.fill("#loginform-username", login, timeout=30_000)
+        await page.fill("#loginform-password", password, timeout=30_000)
+        # есть разные верстки — пробуем по name/role/css
+        clicked = False
+        for sel in [
+            "button[name='login-button']",
+            "button[type='submit']",
+            "text=Кіру",
+            "text=Войти",
+        ]:
+            try:
+                await page.click(sel, timeout=2_000)
+                clicked = True
+                break
+            except Exception:
+                pass
+        if not clicked:
+            raise RuntimeError("Не найден submit на форме логина")
+
+        # даем времени на редирект
+        await page.wait_for_timeout(2500)
+
+        # журнал
+        await page.goto(journal_url, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(2000)
+
+        out_path = f"journal_{user_id}.png"
+        await page.screenshot(path=out_path, full_page=True)
+
+        await ctx.close()
+        await browser.close()
+        return out_path
+
+# ---------------------- WEBHOOK SERVER ----------------------
+async def on_startup(app: web.Application):
     await init_db()
     webhook_url = f"{BASE_URL}/webhook/{BOT_TOKEN}"
     await bot.set_webhook(webhook_url)
     logging.info(f"✅ Вебхук установлен: {webhook_url}")
 
-async def on_shutdown(app):
+async def on_shutdown(app: web.Application):
     await bot.delete_webhook()
     logging.info("🛑 Вебхук удалён")
 
-async def handle_webhook(request):
+async def handle_webhook(request: web.Request):
     data = await request.json()
     update = types.Update(**data)
     await dp.feed_update(bot, update)
@@ -193,7 +280,6 @@ async def handle_webhook(request):
 app = web.Application()
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
-
 app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
 app.router.add_get("/", lambda _: web.Response(text="ALIVE helper is running ✅"))
 
