@@ -2,5 +2,4 @@ aiogram==3.13.1
 aiohttp==3.10.5
 pg8000==1.31.2
 python-dotenv==1.0.0
-selenium==4.11.2
-chromedriver-autoinstaller
+playwright==1.48.0
