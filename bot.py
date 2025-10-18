@@ -1,30 +1,21 @@
 import os
 import logging
-import time
-import pg8000
 import asyncio
-import chromedriver_autoinstaller
+import pg8000
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.async_api import async_playwright
 from html import escape
 
 # ──────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL")
@@ -99,11 +90,6 @@ def delete_user(user_id):
     conn.close()
 
 # ──────────────────────────────
-class AuthForm(StatesGroup):
-    login = State()
-    password = State()
-
-# ──────────────────────────────
 def menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔐 Войти", callback_data="login")],
@@ -113,14 +99,13 @@ def menu_kb():
     ])
 
 def journals_kb():
-    buttons = [
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💻 Python", callback_data="journal_python")],
         [InlineKeyboardButton(text="🎨 Графика", callback_data="journal_graphics")],
         [InlineKeyboardButton(text="🗄️ БД", callback_data="journal_bd")],
         [InlineKeyboardButton(text="🧠 ИКТ", callback_data="journal_ikt")],
         [InlineKeyboardButton(text="🏃 Физ-ра", callback_data="journal_pe")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    ])
 
 # ──────────────────────────────
 @dp.message(CommandStart())
@@ -138,38 +123,6 @@ async def start(message: types.Message):
     )
 
 # ──────────────────────────────
-@dp.callback_query(F.data == "login")
-async def cb_login(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("✍️ Введи логин (ЖСН):")
-    await state.set_state(AuthForm.login)
-    await callback.answer()
-
-@dp.callback_query(F.data == "journals")
-async def cb_journals(callback: types.CallbackQuery):
-    await callback.message.answer("📘 Выбери журнал:", reply_markup=journals_kb())
-    await callback.answer()
-
-@dp.callback_query(F.data == "account")
-async def cb_account(callback: types.CallbackQuery):
-    row = get_user(callback.from_user.id)
-    if not row:
-        await callback.message.answer("❌ Нет данных. Используй /login.")
-    else:
-        masked = "•" * max(8, len(row['password']) // 2)
-        await callback.message.answer(
-            f"👤 <b>SmartNation аккаунт</b>\n"
-            f"Логин: <code>{row['login']}</code>\n"
-            f"Пароль: <code>{masked}</code>"
-        )
-    await callback.answer()
-
-@dp.callback_query(F.data == "logout")
-async def cb_logout(callback: types.CallbackQuery):
-    delete_user(callback.from_user.id)
-    await callback.message.answer("🚪 Данные удалены.")
-    await callback.answer()
-
-# ──────────────────────────────
 JOURNALS = {
     "python": "https://college.snation.kz/kz/tko/control/journals/873776",
     "graphics": "https://college.snation.kz/kz/tko/control/journals/873751",
@@ -179,51 +132,37 @@ JOURNALS = {
 }
 
 # ──────────────────────────────
-def make_screenshot(login, password, url, path):
-    # Устанавливаем chromium автоматически
-    chromedriver_autoinstaller.install()
-
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(options=chrome_options)
-
-    driver.get("https://college.snation.kz/kz/tko/login")
-
+async def ensure_browser_installed():
+    """Устанавливает браузер Playwright при первом запуске (если его нет)."""
+    import subprocess
     try:
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='ЖСН']"))
-        )
-
-        driver.find_element(By.CSS_SELECTOR, "input[aria-label='ЖСН']").send_keys(login)
-        driver.find_element(By.CSS_SELECTOR, "input[aria-label='Құпия сөз']").send_keys(password)
-        driver.find_element(By.XPATH, "//button[contains(., 'Жүйеге кіру')]").click()
-
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "sn-page"))
-        )
-
-        driver.get(url)
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.TAG_NAME, "table"))
-        )
-
-        time.sleep(2)
-        driver.save_screenshot(path)
-
+        subprocess.run(["python", "-m", "playwright", "install", "chromium", "--with-deps"], check=True)
     except Exception as e:
-        driver.save_screenshot("error.png")
-        raise e
-    finally:
-        driver.quit()
+        logger.warning(f"⚠️ Не удалось установить Chromium автоматически: {e}")
+
+async def make_screenshot(login, password, url, path):
+    await ensure_browser_installed()
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        await page.goto("https://college.snation.kz/kz/tko/login")
+        await page.fill("input[aria-label='ЖСН']", login)
+        await page.fill("input[aria-label='Құпия сөз']", password)
+        await page.click("button:has-text('Жүйеге кіру')")
+
+        await page.wait_for_load_state("networkidle")
+        await page.goto(url)
+        await page.wait_for_timeout(2000)
+
+        await page.screenshot(path=path, full_page=True)
+        await browser.close()
 
 # ──────────────────────────────
 @dp.callback_query(F.data.startswith("journal_"))
 async def cb_journal(callback: types.CallbackQuery):
-    await callback.answer("⏳ Загрузка...")
     subj = callback.data.replace("journal_", "")
     row = get_user(callback.from_user.id)
     if not row:
@@ -238,7 +177,7 @@ async def cb_journal(callback: types.CallbackQuery):
     await callback.message.answer("⏳ Захожу в SmartNation...")
 
     try:
-        await asyncio.to_thread(make_screenshot, login, password, url, path)
+        await make_screenshot(login, password, url, path)
         await bot.send_photo(callback.from_user.id, open(path, "rb"))
     except Exception as e:
         await callback.message.answer(f"⚠️ Ошибка при загрузке журнала:\n<code>{escape(str(e))}</code>")
@@ -263,8 +202,9 @@ async def root(request):
 async def on_start(app: web.Application):
     init_db()
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(f"{WEBHOOK_URL}")
+    await bot.set_webhook(WEBHOOK_URL)
     logger.info("✅ Webhook установлен и база готова!")
+    await ensure_browser_installed()
 
 def main():
     app = web.Application()
