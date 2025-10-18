@@ -2,51 +2,52 @@ import os
 import asyncio
 import logging
 import asyncpg
-from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
-# ──────────────────────────────────────
+# ───────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("BASE_URL")  # например: https://your-app-name.up.railway.app
-DB_URL = os.getenv("DATABASE_URL")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+BASE_URL = os.getenv("BASE_URL")
+PORT = int(os.getenv("PORT", 8080))
 
-bot = Bot(token=TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+db_pool = None
 
-# ──────────────────────────────────────
-# Подключение к базе данных PostgreSQL (Neon.tech)
+# ───────────────────────────────
+# База данных
 async def init_db():
-    conn = await asyncpg.connect(DB_URL)
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            login TEXT,
-            password TEXT
-        )
-    """)
-    await conn.close()
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL)
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                login TEXT,
+                password TEXT
+            )
+        """)
 
-asyncio.run(init_db())
-
-# ──────────────────────────────────────
-# Меню клавиатура
+# ───────────────────────────────
+# Клавиатура
 def menu_kb():
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📚 Журналы", callback_data="journals")],
-        [InlineKeyboardButton(text="🔐 Аккаунт", callback_data="account")],
-        [InlineKeyboardButton(text="🚪 Выйти", callback_data="logout")]
-    ])
-    return kb
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔐 Войти", callback_data="login")
+    kb.button(text="📚 Журналы", callback_data="journals")
+    kb.button(text="👤 Аккаунт", callback_data="account")
+    kb.button(text="📤 Выйти", callback_data="logout")
+    kb.adjust(1)
+    return kb.as_markup()
 
-# ──────────────────────────────────────
+# ───────────────────────────────
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await message.answer(
@@ -61,78 +62,123 @@ async def start(message: types.Message):
         reply_markup=menu_kb()
     )
 
-# ──────────────────────────────────────
+# ───────────────────────────────
+# Логин — два шага: ИИН и пароль
+user_temp = {}
+
 @dp.message(Command("login"))
-async def login_cmd(message: types.Message):
-    await message.answer("🔑 Введи логин (в формате: логин пароль):")
+async def cmd_login(message: types.Message):
+    await message.answer("🔑 Введи ИИН:")
+    user_temp[message.from_user.id] = {"step": "iin"}
 
 @dp.message()
-async def save_login(message: types.Message):
-    try:
-        login, password = message.text.split(" ")
-        conn = await asyncpg.connect(DB_URL)
-        await conn.execute("""
-            INSERT INTO users (user_id, login, password)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE SET login=$2, password=$3
-        """, message.from_user.id, login, password)
-        await conn.close()
-        await message.answer("✅ Логин и пароль сохранены!")
-    except Exception:
-        await message.answer("⚠️ Неверный формат. Введи: логин пароль")
+async def handle_login_steps(message: types.Message):
+    uid = message.from_user.id
+    if uid in user_temp:
+        step = user_temp[uid].get("step")
 
-# ──────────────────────────────────────
-@dp.callback_query(lambda c: c.data == "journals")
-async def journals(callback: types.CallbackQuery):
-    await callback.message.answer("🕐 Загружаю журнал...")
-    await take_screenshot(callback)
+        # шаг 1 — ввод ИИН
+        if step == "iin":
+            user_temp[uid]["login"] = message.text.strip()
+            user_temp[uid]["step"] = "password"
+            await message.answer("🔒 Теперь введи пароль:")
 
-async def take_screenshot(callback: types.CallbackQuery):
-    conn = await asyncpg.connect(DB_URL)
-    user = await conn.fetchrow("SELECT login, password FROM users WHERE user_id=$1", callback.from_user.id)
-    await conn.close()
-    if not user:
-        await callback.message.answer("❌ Ты не авторизован. Используй /login")
+        # шаг 2 — ввод пароля
+        elif step == "password":
+            password = message.text.strip()
+            login = user_temp[uid]["login"]
+
+            async with db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO users (user_id, login, password)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET login=$2, password=$3
+                """, uid, login, password)
+
+            del user_temp[uid]
+            await message.answer("✅ Логин и пароль сохранены!")
         return
 
-    login, password = user["login"], user["password"]
-    screenshot_path = f"screenshot_{callback.from_user.id}.png"
+# ───────────────────────────────
+# Просмотр учётки
+@dp.message(Command("account"))
+async def account(message: types.Message):
+    async with db_pool.acquire() as conn:
+        data = await conn.fetchrow("SELECT login, password FROM users WHERE user_id=$1", message.from_user.id)
+        if data:
+            await message.answer(f"👤 SmartNation аккаунт:\nЛогин: {data['login']}\nПароль: {'*' * len(data['password'])}")
+        else:
+            await message.answer("⚠️ Ты ещё не вошёл! Используй /login")
+
+# ───────────────────────────────
+# Удаление данных
+@dp.message(Command("logout"))
+async def logout(message: types.Message):
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM users WHERE user_id=$1", message.from_user.id)
+    await message.answer("📤 Данные удалены!")
+
+# ───────────────────────────────
+# Получение скрина журнала
+@dp.message(Command("journals"))
+async def journals(message: types.Message):
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT login, password FROM users WHERE user_id=$1", message.from_user.id)
+        if not user:
+            await message.answer("⚠️ Сначала войди через /login")
+            return
+
+    await message.answer("⏳ Загружаю журнал...")
+    screenshot_path = f"screenshot_{message.from_user.id}.png"
 
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page()
-            await page.goto("https://college.snation.kz/kz/tko/login")
-            await page.fill("#loginform-username", login)
-            await page.fill("#loginform-password", password)
-            await page.click("button[type=submit]")
-            await page.wait_for_timeout(4000)
-            await page.screenshot(path=screenshot_path)
-            await browser.close()
-
-        await callback.message.answer_photo(photo=open(screenshot_path, "rb"), caption="📸 Журнал успешно загружен!")
+        await make_screenshot(user["login"], user["password"], screenshot_path)
+        await message.answer_photo(photo=open(screenshot_path, "rb"), caption="📸 Готово!")
         os.remove(screenshot_path)
     except Exception as e:
-        await callback.message.answer(f"⚠️ Ошибка при загрузке журнала:\n{e}")
+        await message.answer(f"⚠️ Ошибка: {e}")
 
-# ──────────────────────────────────────
-# Веб-сервер и вебхук
-app = web.Application()
+# ───────────────────────────────
+# Playwright логин и скрин
+async def make_screenshot(login, password, path):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--no-sandbox"], headless=True)
+        page = await browser.new_page()
+        try:
+            await page.goto("https://college.snation.kz/kz/tko/login", timeout=60000)
+            await page.fill("input[name='LoginForm[username]']", login)
+            await page.fill("input[name='LoginForm[password]']", password)
+            await page.click("button[type='submit']")
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            await page.goto("https://college.snation.kz/kz/tko/control/journals", timeout=60000)
+            await page.screenshot(path=path, full_page=True)
+        finally:
+            await browser.close()
 
+# ───────────────────────────────
+# Webhook сервер
 async def on_startup(app):
-    await bot.set_webhook(f"{BASE_URL}/webhook/{TOKEN}")
-    print("✅ Webhook установлен и база готова!")
+    await init_db()
+    await bot.set_webhook(f"{BASE_URL}/webhook/{BOT_TOKEN}")
+    logging.info("✅ Webhook установлен и база готова!")
 
 async def on_shutdown(app):
     await bot.delete_webhook()
-    await bot.session.close()
-    print("🛑 Webhook удалён и сессия закрыта")
+    await db_pool.close()
+    logging.info("🛑 Webhook удалён и база закрыта!")
 
+async def handle_webhook(request):
+    data = await request.json()
+    await dp.feed_update(bot, types.Update(**data))
+    return web.Response()
+
+# ───────────────────────────────
+app = web.Application()
+app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
 
-SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=f"/webhook/{TOKEN}")
-setup_application(app, dp, bot=bot)
-
-PORT = int(os.getenv("PORT", 8080))
-web.run_app(app, host="0.0.0.0", port=PORT)
+# ───────────────────────────────
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=PORT)
