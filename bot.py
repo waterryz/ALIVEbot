@@ -135,7 +135,7 @@ JOURNALS = {
 
 # ──────────────────────────────
 CHROME_PATH = "./chrome/chrome-linux/chrome"
-CHROME_ZIP = "https://github.com/macchrome/macstable/releases/download/v114.0.5735.90-r1153629/Linux_Chromium_114.0.5735.90.zip"
+CHROME_ZIP = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1145147/chrome-linux.zip"
 
 async def ensure_chromium():
     """Скачивает portable Chromium при первом запуске."""
