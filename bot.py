@@ -18,7 +18,7 @@ load_dotenv()
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
 DATABASE_URL= os.getenv("DATABASE_URL")
 BASE_URL    = os.getenv("BASE_URL")  # публичный URL Railway
-PORT        = int(os.getenv("PORT", 10000))
+PORT        = int(os.getenv("PORT", 8080))
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(BOT_TOKEN)
