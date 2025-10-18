@@ -135,7 +135,7 @@ JOURNALS = {
 
 # ──────────────────────────────
 CHROME_PATH = "./chrome/chrome-linux/chrome"
-CHROME_ZIP = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1145147/chrome-linux.zip"
+CHROME_ZIP = "https://files.catbox.moe/5xq5se.zip"  # ✅ стабильное зеркало Chromium
 
 async def ensure_chromium():
     """Скачивает portable Chromium при первом запуске."""
@@ -174,12 +174,7 @@ async def make_screenshot(login, password, url, path):
         browser = await p.chromium.launch(
             headless=True,
             executable_path=chromium_executable,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-software-rasterizer"
-            ]
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
         page = await browser.new_page()
 
@@ -187,10 +182,10 @@ async def make_screenshot(login, password, url, path):
         await page.fill("input[aria-label='ЖСН']", login)
         await page.fill("input[aria-label='Құпия сөз']", password)
         await page.click("button:has-text('Жүйеге кіру')")
-
         await page.wait_for_load_state("networkidle")
+
         await page.goto(url)
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(3000)
 
         await page.screenshot(path=path, full_page=True)
         await browser.close()
