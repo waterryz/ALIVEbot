@@ -2,6 +2,9 @@ import os
 import logging
 import asyncio
 import pg8000
+import subprocess
+import aiohttp
+import zipfile
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -132,20 +135,40 @@ JOURNALS = {
 }
 
 # ──────────────────────────────
-async def ensure_browser_installed():
-    """Устанавливает браузер Playwright при первом запуске (если его нет)."""
-    import subprocess
-    try:
-        subprocess.run(["python", "-m", "playwright", "install", "chromium", "--with-deps"], check=True)
-    except Exception as e:
-        logger.warning(f"⚠️ Не удалось установить Chromium автоматически: {e}")
+CHROME_PATH = "./chrome/chrome-linux/chrome"
+CHROME_ZIP = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1140/chrome-linux.zip"
+
+async def ensure_chromium():
+    """Скачивает portable Chromium при первом запуске."""
+    if os.path.exists(CHROME_PATH):
+        return
+    os.makedirs("chrome", exist_ok=True)
+    zip_path = "chrome/chrome.zip"
+
+    logger.info("⬇️ Скачиваю Chromium portable...")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(CHROME_ZIP) as resp:
+            with open(zip_path, "wb") as f:
+                while True:
+                    chunk = await resp.content.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall("chrome")
+    os.remove(zip_path)
+    logger.info("✅ Chromium готов!")
 
 async def make_screenshot(login, password, url, path):
-    await ensure_browser_installed()
+    await ensure_chromium()
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            executable_path=CHROME_PATH
+        )
         page = await browser.new_page()
 
         await page.goto("https://college.snation.kz/kz/tko/login")
@@ -204,7 +227,7 @@ async def on_start(app: web.Application):
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
     logger.info("✅ Webhook установлен и база готова!")
-    await ensure_browser_installed()
+    await ensure_chromium()
 
 def main():
     app = web.Application()
