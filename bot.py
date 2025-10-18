@@ -250,6 +250,21 @@ async def handle_webhook(request):
 
 app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
 
+# новый хендлер вебхука (без приватных методов)
+async def handle_webhook(request):
+    update = await request.json()
+    await dp.feed_update(bot, types.Update(**update))
+    return web.Response(text="ok")
+
+app.router.add_post(f"/webhook/{BOT_TOKEN}", handle_webhook)
+
+# важно зарегистрировать хендлеры колбэков
+dp.callback_query.register(cb_journal)
+
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=PORT)
+
+
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
 
