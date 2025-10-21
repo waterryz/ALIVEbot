@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -40,6 +41,7 @@ func parseSmartNation(login, pass string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return base64.StdEncoding.EncodeToString(screenshot), nil
 }
 
@@ -61,6 +63,9 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"image": img})
 	})
 
-	r.Run(":8080") // слушает localhost:8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	r.Run("0.0.0.0:" + port)
 }
-
