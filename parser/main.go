@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -11,61 +13,58 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Credentials struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
-}
-
-func parseSmartNation(login, pass string) (string, error) {
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
-
-	ctx, cancel = context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-
-	loginURL := "https://college.snation.kz/kz/tko/login"
-	journalURL := "https://college.snation.kz/kz/tko/control/journals/873776"
-
-	var screenshot []byte
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(loginURL),
-		chromedp.Sleep(2*time.Second),
-		chromedp.SendKeys(`input[name="username"]`, login),
-		chromedp.SendKeys(`input[name="password"]`, pass),
-		chromedp.Click(`button[type="submit"]`),
-		chromedp.Sleep(3*time.Second),
-		chromedp.Navigate(journalURL),
-		chromedp.Sleep(3*time.Second),
-		chromedp.FullScreenshot(&screenshot, 90),
-	)
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(screenshot), nil
-}
-
 func main() {
 	r := gin.Default()
 
 	r.POST("/parse", func(c *gin.Context) {
-		var creds Credentials
-		if err := c.ShouldBindJSON(&creds); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		var creds struct {
+			Login    string `json:"login"`
+			Password string `json:"password"`
+		}
+		if err := c.BindJSON(&creds); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
 			return
 		}
 
-		img, err := parseSmartNation(creds.Login, creds.Password)
+		imageBase64, err := parseSmartNation(creds.Login, creds.Password)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			fmt.Println("❌ Ошибка парсинга:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "parse error"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"image": img})
+
+		c.JSON(http.StatusOK, gin.H{"screenshot": imageBase64})
 	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	r.Run("0.0.0.0:" + port)
+	r.Run(":" + port)
+}
+
+func parseSmartNation(login, pass string) (string, error) {
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var buf []byte
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(`https://college.snation.kz/kz/tko/login`),
+		chromedp.Sleep(3*time.Second),
+		chromedp.SendKeys(`#login-email`, login),
+		chromedp.Sleep(1*time.Second),
+		chromedp.SendKeys(`#login-password`, pass),
+		chromedp.Sleep(1*time.Second),
+		chromedp.Click(`button[type="submit"]`),
+		chromedp.Sleep(8*time.Second),
+		chromedp.FullScreenshot(&buf, 90),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(buf), nil
 }
